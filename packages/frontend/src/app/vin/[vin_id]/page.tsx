@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
 import { useVin } from '@/hooks/use-vin';
+import { useVoicePreload } from '@/hooks/use-voice-preload';
 import { HeroRiskCard } from '@/components/vin/hero-risk-card';
 import { PillarConstellation } from '@/components/vin/pillar-constellation';
 import { PlaybackTimeline } from '@/components/vin/playback-timeline';
@@ -18,6 +19,7 @@ import { fadeInUp } from '@/lib/motion';
 export default function VinDetailPage() {
   const { vin_id } = useParams<{ vin_id: string }>();
   const { data, isLoading, error } = useVin(vin_id);
+  useVoicePreload('vin', vin_id);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(false);
 

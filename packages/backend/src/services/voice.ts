@@ -67,6 +67,10 @@ function safeFallback(params: { scope: 'vin' | 'fleet'; context: Record<string, 
   return `You have ${escalated} vehicle${escalated !== 1 ? 's' : ''} escalated and ${monitor} being monitored. ${topNames.length > 0 ? `Top priority: ${topNames.join(', ')}.` : ''} Ford compares each vehicle against millions of similar ones in the fleet — these are the ones showing patterns that stand out from their peers.`;
 }
 
+export function buildQuickResponse(params: { scope: 'vin' | 'fleet'; message: string; context: Record<string, unknown> }): string {
+  return safeFallback(params);
+}
+
 export async function* streamVoiceResponse(params: {
   scope: 'vin' | 'fleet';
   message: string;

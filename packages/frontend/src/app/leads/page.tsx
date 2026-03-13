@@ -8,9 +8,11 @@ import { SubsystemFilter } from '@/components/leads/subsystem-filter';
 import { VoiceOverlay } from '@/components/voice/voice-overlay';
 import { VoiceTrigger } from '@/components/voice/voice-trigger';
 import { Header } from '@/components/layout/header';
+import { useVoicePreload } from '@/hooks/use-voice-preload';
 import { API_BASE } from '@/lib/api-client';
 
 export default function LeadsPage() {
+  useVoicePreload('fleet', null);
   const [governanceBand, setGovernanceBand] = useState<string | null>(null);
   const [subsystem, setSubsystem] = useState<string | null>(null);
   const [page, setPage] = useState(1);

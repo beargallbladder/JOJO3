@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
-import { streamVoiceResponse } from '../services/voice.js';
+import { streamVoiceResponse, buildQuickResponse } from '../services/voice.js';
 import { db } from '../config/database.js';
 import { vins } from '../db/schema.js';
 import { eq, desc } from 'drizzle-orm';
@@ -24,27 +24,13 @@ const SUBSYSTEM_FRIENDLY: Record<string, string> = {
   brake_wear: 'brake wear',
 };
 
-export const voiceRoute = new Hono();
-
-voiceRoute.post('/vin/:vin_id', async (c) => {
-  const vinId = c.req.param('vin_id');
-  const body = await c.req.json();
-
-  const [vin] = await db.select().from(vins).where(eq(vins.id, vinId));
-  if (!vin) return c.json({ error: 'VIN not found' }, 404);
-
-  const [pillars, timeline, governance] = await Promise.all([
-    getPillarsForVin(vinId),
-    getTimelineForVin(vinId),
-    getGovernanceForVin(vinId),
-  ]);
-
+function buildVinContext(vin: typeof vins.$inferSelect, pillars: any[], governance: any[]) {
   const recentPillars = pillars.slice(-15);
-  const presentEvidence = [...new Set(recentPillars.filter(p => p.pillar_state === 'present').map(p => PILLAR_FRIENDLY[p.pillar_name] || p.pillar_name))];
-  const absentEvidence = [...new Set(recentPillars.filter(p => p.pillar_state === 'absent').map(p => PILLAR_FRIENDLY[p.pillar_name] || p.pillar_name))];
-  const unknownEvidence = [...new Set(recentPillars.filter(p => p.pillar_state === 'unknown').map(p => PILLAR_FRIENDLY[p.pillar_name] || p.pillar_name))];
+  const presentEvidence = [...new Set(recentPillars.filter((p: any) => p.pillar_state === 'present').map((p: any) => PILLAR_FRIENDLY[p.pillar_name] || p.pillar_name))];
+  const absentEvidence = [...new Set(recentPillars.filter((p: any) => p.pillar_state === 'absent').map((p: any) => PILLAR_FRIENDLY[p.pillar_name] || p.pillar_name))];
+  const unknownEvidence = [...new Set(recentPillars.filter((p: any) => p.pillar_state === 'unknown').map((p: any) => PILLAR_FRIENDLY[p.pillar_name] || p.pillar_name))];
 
-  const context = {
+  return {
     vehicle: `${vin.year} ${vin.make} ${vin.model} ${vin.trim}`,
     vin_code: vin.vin_code,
     subsystem: SUBSYSTEM_FRIENDLY[vin.subsystem] || vin.subsystem,
@@ -65,6 +51,30 @@ voiceRoute.post('/vin/:vin_id', async (c) => {
         ? 'No service needed yet. We are watching this vehicle.'
         : 'No service needed. This vehicle is suppressed.',
   };
+}
+
+export const voiceRoute = new Hono();
+
+voiceRoute.post('/vin/:vin_id', async (c) => {
+  const vinId = c.req.param('vin_id');
+  const body = await c.req.json();
+  const fast = c.req.query('fast') === '1';
+
+  const [vin] = await db.select().from(vins).where(eq(vins.id, vinId));
+  if (!vin) return c.json({ error: 'VIN not found' }, 404);
+
+  const [pillars, _timeline, governance] = await Promise.all([
+    getPillarsForVin(vinId),
+    fast ? Promise.resolve([]) : getTimelineForVin(vinId),
+    getGovernanceForVin(vinId),
+  ]);
+
+  const context = buildVinContext(vin, pillars, governance);
+
+  if (fast) {
+    const text = buildQuickResponse({ scope: 'vin', message: body.message || '', context });
+    return c.json({ text });
+  }
 
   return streamSSE(c, async (stream) => {
     const gen = streamVoiceResponse({
@@ -81,6 +91,7 @@ voiceRoute.post('/vin/:vin_id', async (c) => {
 
 voiceRoute.post('/fleet', async (c) => {
   const body = await c.req.json();
+  const fast = c.req.query('fast') === '1';
 
   const topLeads = await db.select().from(vins).orderBy(desc(vins.posterior_p)).limit(20);
 
@@ -98,6 +109,11 @@ voiceRoute.post('/fleet', async (c) => {
     monitor_count: topLeads.filter(v => v.governance_band === 'MONITOR').length,
     suppressed_count: topLeads.filter(v => v.governance_band === 'SUPPRESSED').length,
   };
+
+  if (fast) {
+    const text = buildQuickResponse({ scope: 'fleet', message: body.message || '', context });
+    return c.json({ text });
+  }
 
   return streamSSE(c, async (stream) => {
     const gen = streamVoiceResponse({

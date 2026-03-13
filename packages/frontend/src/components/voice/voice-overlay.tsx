@@ -7,6 +7,7 @@ import { springs } from '@/lib/motion';
 import { PulseIndicator } from './pulse-indicator';
 import { StreamingText } from './streaming-text';
 import { useVoiceStream } from '@/hooks/use-voice-stream';
+import { getCachedVoice } from '@/hooks/use-voice-preload';
 import { API_BASE } from '@/lib/api-client';
 import type { VoiceScope } from '@gravity/shared';
 
@@ -36,6 +37,7 @@ const TTS_EARLY_THRESHOLD = 120;
 
 export function VoiceOverlay({ open, onClose, scope, vinId }: VoiceOverlayProps) {
   const [input, setInput] = useState('');
+  const [cachedText, setCachedText] = useState('');
   const { isStreaming, text, error, stream, stop, reset } = useVoiceStream();
   const [ttsStatus, setTtsStatus] = useState<'idle' | 'generating' | 'speaking' | 'error'>('idle');
   const [ttsError, setTtsError] = useState<string | null>(null);
@@ -65,6 +67,28 @@ export function VoiceOverlay({ open, onClose, scope, vinId }: VoiceOverlayProps)
     setTtsStatus('idle');
     setTtsError(null);
     stopAudio();
+
+    const cached = getCachedVoice(scope, vinId || null, message.trim());
+    if (cached) {
+      ttsFiredForRef.current = requestIdRef.current;
+      setCachedText(cached.text);
+
+      if (cached.audioUrl) {
+        setTtsStatus('speaking');
+        const audio = new Audio(cached.audioUrl);
+        audioRef.current = audio;
+        audio.onended = () => setTtsStatus('idle');
+        audio.play().catch(() => setTtsStatus('idle'));
+      } else {
+        fireTts(cached.text);
+      }
+
+      setInput('');
+      return;
+    }
+
+    setCachedText('');
+
     stream(scope, vinId || null, message.trim());
     setInput('');
   };
@@ -138,6 +162,7 @@ export function VoiceOverlay({ open, onClose, scope, vinId }: VoiceOverlayProps)
   const handleClose = () => {
     stop();
     reset();
+    setCachedText('');
     stopAudio();
     onClose();
   };
@@ -189,7 +214,7 @@ export function VoiceOverlay({ open, onClose, scope, vinId }: VoiceOverlayProps)
               </div>
 
               <div className="px-6 pb-4">
-                <StreamingText text={text} isStreaming={isStreaming} />
+                <StreamingText text={cachedText || text} isStreaming={isStreaming && !cachedText} />
                 {error && (
                   <p className="text-xs text-risk-critical mt-2">{error}</p>
                 )}
@@ -200,7 +225,7 @@ export function VoiceOverlay({ open, onClose, scope, vinId }: VoiceOverlayProps)
                 )}
               </div>
 
-              {!text && !isStreaming && (
+              {!text && !cachedText && !isStreaming && (
                 <div className="px-6 pb-4">
                   <div className="text-[10px] font-semibold uppercase tracking-widest text-gravity-text-whisper mb-2">
                     Quick Prompts
