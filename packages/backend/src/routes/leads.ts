@@ -7,6 +7,7 @@ leadsRoute.get('/', async (c) => {
   const query = {
     subsystem: c.req.query('subsystem'),
     band: c.req.query('band'),
+    governance_band: c.req.query('governance_band'),
     page: c.req.query('page') ? parseInt(c.req.query('page')!) : undefined,
     limit: c.req.query('limit') ? parseInt(c.req.query('limit')!) : undefined,
   };
