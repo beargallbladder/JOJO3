@@ -1,99 +1,70 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { env } from '../config/env.js';
 
-const PILLAR_FRIENDLY: Record<string, string> = {
-  short_trip_density: 'short trips',
-  ota_stress: 'software updates',
-  cold_soak: 'cold weather exposure',
-  cranking_degradation: 'starting performance',
-  hmi_reset: 'driver reset',
-  service_record: 'dealer service record',
-  parts_purchase: 'parts purchase',
-  cohort_prior: 'fleet pattern',
-};
+const VIN_SYSTEM_PROMPT = `You are a Ford Vehicle Health assistant. You help dealers and service advisors understand what's going on with a specific vehicle.
 
-const VIN_SYSTEM_PROMPT = `You are a Ford Vehicle Health assistant. You help dealers and service advisors understand what's going on with a specific vehicle — clearly, warmly, and without jargon.
+CRITICAL RULES:
+1. You MUST match the governance_band and service_recommendation in the data. If governance says SUPPRESSED and service says "no service needed," you MUST NOT recommend service. If it says ESCALATED, you MUST say service is recommended.
+2. You MUST reference the actual evidence_present and evidence_absent lists provided. Do not invent evidence.
+3. Explain WHY missing evidence matters — Ford uses data from millions of vehicles to find outlier behavior BEFORE a breakdown. When a pillar is missing, it means we can't compare this vehicle's pattern against the fleet. That gap reduces our confidence.
+4. Talk naturally. A dealer should be able to repeat what you say to a customer word for word.
+5. Never say "posterior," "confidence score," "staleness index," or "pillar." Say "risk level," "how sure we are," "how fresh the data is," and "evidence" or "signal."
+6. Keep it to 3-5 sentences.
 
-Your job is to translate technical vehicle health data into language a dealer service advisor would use when talking to a customer, or that an owner could understand on their phone.
+THE COHORT STORY (use this when relevant):
+Ford monitors millions of connected vehicles. We compare each VIN's behavior patterns — trip length, starting performance, weather exposure, service history — against similar vehicles in the same region. When a vehicle starts behaving differently from its peers, that's a signal. We don't wait for a breakdown. We catch the pattern early. But we also don't cry wolf — we need enough evidence across multiple signals before we act.`;
 
-Rules:
-- Talk like a knowledgeable friend, not a robot. Use natural sentences.
-- Never say "posterior probability" — say "risk level" or "likelihood."
-- Never say "confidence score" — say "how sure we are" or "evidence strength."
-- Never say "staleness index" — say "how recent the data is" or "freshness."
-- Reference evidence in plain English: "short trips," "cold weather," "starting health," "dealer service records," "parts purchases," "software updates," "fleet patterns."
-- When evidence is missing, explain WHY it matters: "We haven't seen a service record yet, which is why we're not fully confident."
-- Be honest about uncertainty. If confidence is low, say so directly.
-- End with a clear, practical suggestion the dealer or owner can act on.
-- Keep it conversational. 3-5 sentences max unless asked for detail.
+const FLEET_SYSTEM_PROMPT = `You are a Ford Vehicle Health assistant for fleet managers.
 
-Example of good output:
-"This F-150 has been flagged because the battery is showing signs of wear — mostly from a lot of short trips and some cold weather stress. We're about 70% sure this needs attention, but we haven't seen a dealer service record yet, so we're holding off on sending an alert. If the owner comes in for anything else, it'd be worth checking the battery while it's there."`;
+CRITICAL RULES:
+1. Reference the actual governance_band counts provided. If there are 0 escalated vehicles, say so.
+2. Reference specific vehicles by model and VIN last 4 digits from the data.
+3. Explain the cohort story: Ford monitors millions of vehicles to find outliers before breakdown. Each vehicle is compared against its peers.
+4. Be practical: what to look at first, what can wait.
+5. Talk naturally. 3-5 sentences.`;
 
-const FLEET_SYSTEM_PROMPT = `You are a Ford Vehicle Health assistant helping fleet managers understand their vehicle risk landscape — clearly, practically, and without jargon.
+function safeFallback(params: { scope: 'vin' | 'fleet'; context: Record<string, unknown> }) {
+  const ctx: any = params.context || {};
 
-Rules:
-- Talk like a knowledgeable advisor. Natural language, not report-speak.
-- Reference vehicles by model and last 4 of VIN when available.
-- Say "high risk" not "elevated posterior." Say "we're confident" not "C score above threshold."
-- Explain what's driving the risk in plain terms (short trips, cold weather, missing service records, etc).
-- Prioritize actionable advice: which vehicles to look at first, what to schedule, what can wait.
-- Keep it concise. 3-5 sentences for overview, more if asked.
-
-Example of good output:
-"You've got three trucks that need attention soon — two F-150s with battery concerns from heavy short-trip use, and an Explorer where we flagged an oil change that might not have actually happened. The Explorer is the priority because we haven't seen a service record and the oil quality still looks off. The rest of the fleet looks good."`;
-
-function friendlyPillar(name: string): string {
-  return PILLAR_FRIENDLY[name] || name.replace(/_/g, ' ');
-}
-
-function safeFallback(params: { scope: 'vin' | 'fleet'; message: string; context: Record<string, unknown> }) {
   if (params.scope === 'vin') {
-    const ctx: any = params.context || {};
-    const vin = ctx.vin || {};
-    const pillars = Array.isArray(ctx.pillars) ? ctx.pillars : [];
-    const governance = Array.isArray(ctx.governance) ? ctx.governance : [];
+    const vehicle = ctx.vehicle || 'this vehicle';
+    const risk = ctx.risk_level_percent ?? 0;
+    const evidence = ctx.evidence_strength_percent ?? 0;
+    const band = ctx.governance_band || 'SUPPRESSED';
+    const present = Array.isArray(ctx.evidence_present) ? ctx.evidence_present : [];
+    const absent = Array.isArray(ctx.evidence_absent) ? ctx.evidence_absent : [];
+    const missing = Array.isArray(ctx.evidence_missing) ? ctx.evidence_missing : [];
+    const serviceRec = ctx.service_recommendation || '';
 
-    const presentPillars = pillars
-      .filter((p: any) => p.pillar_state === 'present')
-      .slice(-3)
-      .map((p: any) => friendlyPillar(p.pillar_name));
-    const absentPillars = pillars
-      .filter((p: any) => p.pillar_state === 'absent')
-      .slice(-2)
-      .map((p: any) => friendlyPillar(p.pillar_name));
+    const drivers = present.length > 0
+      ? `The main signals are ${present.slice(0, 3).join(' and ')}.`
+      : 'We don\'t have strong signals pointing in any direction yet.';
 
-    const p = Number(vin.posterior_p ?? 0);
-    const c = Number(vin.posterior_c ?? 0);
-    const vehicle = `${vin.year || ''} ${vin.make || ''} ${vin.model || ''}`.trim() || 'this vehicle';
-    const riskWord = p >= 0.8 ? 'high' : p >= 0.6 ? 'elevated' : p >= 0.3 ? 'moderate' : 'low';
-    const confWord = c >= 0.7 ? "pretty confident" : c >= 0.5 ? "moderately confident" : "not very confident yet";
+    const gaps = absent.length > 0
+      ? `We expected to see ${absent.slice(0, 2).join(' and ')} but didn\'t — that\'s actually important because Ford compares this vehicle against millions of similar ones, and that missing data means we can\'t confirm the pattern.`
+      : missing.length > 0
+        ? `We\'re still waiting on ${missing.slice(0, 2).join(' and ')} to complete the picture.`
+        : '';
 
-    const drivers = presentPillars.length > 0
-      ? `The main factors are ${presentPillars.join(' and ')}.`
-      : 'We don\'t have strong evidence pointing in any one direction yet.';
-    const gaps = absentPillars.length > 0
-      ? `We're still waiting on ${absentPillars.join(' and ')}, which would help us be more certain.`
-      : '';
-    const action = governance.length > 0
-      ? `Right now the system has it marked as "${(governance[0].action_type || '').replace(/_/g, ' ')}."` 
-      : p >= 0.7
-        ? 'If this vehicle comes in for anything, it would be worth taking a look.'
-        : 'No action needed right now — we\'re just keeping an eye on it.';
+    const action = band === 'ESCALATED'
+      ? 'Based on what we see, this vehicle should be scheduled for service.'
+      : band === 'MONITOR'
+        ? 'We\'re keeping an eye on this one but not recommending action yet.'
+        : `The system is holding this one back — ${evidence < 50 ? 'we don\'t have enough evidence to act' : 'the risk level isn\'t high enough to trigger an alert'}.`;
 
-    return `This ${vehicle} is showing ${riskWord} risk, and we're ${confWord} about that call. ${drivers} ${gaps} ${action}`.trim();
+    return `This ${vehicle} is at ${risk}% risk for ${ctx.subsystem || 'issues'}, and we're ${evidence}% confident in that assessment. ${drivers} ${gaps} ${action}`.trim();
   }
 
-  const ctx: any = params.context || {};
-  const top = Array.isArray(ctx.top_leads) ? ctx.top_leads : [];
-  const top3 = top.slice(0, 3).map((v: any) => {
-    const model = v.model || v.vin_code?.slice(-4) || 'vehicle';
-    const risk = Number(v.p ?? 0) >= 0.7 ? 'high risk' : 'elevated';
-    return `${model} (${risk})`;
-  });
+  const escalated = ctx.escalated_count ?? 0;
+  const monitor = ctx.monitor_count ?? 0;
+  const top = Array.isArray(ctx.top_vehicles) ? ctx.top_vehicles : [];
+  const topNames = top.slice(0, 3).map((v: any) => `${v.vehicle} (${v.vin_last4})`);
 
-  if (top3.length === 0) return 'The fleet looks healthy right now. No vehicles need immediate attention.';
-  return `You've got ${top3.length} vehicles that need attention: ${top3.join(', ')}. I'd start with the first one on the list — that's where the strongest signal is. The rest of the fleet is looking normal.`;
+  if (escalated === 0 && monitor === 0) {
+    return 'The fleet looks healthy right now. No vehicles need immediate attention. We\'re monitoring everything against fleet-wide patterns and nothing stands out.';
+  }
+
+  return `You have ${escalated} vehicle${escalated !== 1 ? 's' : ''} escalated and ${monitor} being monitored. ${topNames.length > 0 ? `Top priority: ${topNames.join(', ')}.` : ''} Ford compares each vehicle against millions of similar ones in the fleet — these are the ones showing patterns that stand out from their peers.`;
 }
 
 export async function* streamVoiceResponse(params: {
@@ -113,12 +84,12 @@ export async function* streamVoiceResponse(params: {
 
     const stream = await client.messages.stream({
       model: 'claude-sonnet-4-6-20250514',
-      max_tokens: 1024,
+      max_tokens: 512,
       system: systemPrompt,
       messages: [
         {
           role: 'user',
-          content: `Context data:\n${JSON.stringify(params.context, null, 2)}\n\nUser question: ${params.message}`,
+          content: `Vehicle data:\n${JSON.stringify(params.context, null, 2)}\n\nQuestion: ${params.message}`,
         },
       ],
     });

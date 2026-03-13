@@ -11,32 +11,31 @@ interface GovernanceResult {
 
 export function computeGovernanceBand(p: number, c: number, sDays: number): GovernanceResult {
   if (sDays > STALENESS_HARD_CEILING) {
-    return { band: 'SUPPRESSED', reason: `S=${sDays}d exceeds ${STALENESS_HARD_CEILING}d ceiling` };
+    return { band: 'SUPPRESSED', reason: `Evidence is ${sDays} days old — too stale to act on` };
   }
 
   if (c < 0.50) {
-    return { band: 'SUPPRESSED', reason: `C=${c.toFixed(2)} below 0.50 floor — insufficient evidence` };
+    return { band: 'SUPPRESSED', reason: `Not enough evidence to act (${Math.round(c * 100)}% coverage). Need at least 50%.` };
   }
 
   if (p >= 0.85 && c >= 0.70 && sDays <= 14) {
-    return { band: 'ESCALATED', reason: `P=${p.toFixed(2)} ≥ 0.85, C=${c.toFixed(2)} ≥ 0.70, S=${sDays}d ≤ 14` };
+    return { band: 'ESCALATED', reason: `High risk (${Math.round(p * 100)}%) with strong evidence (${Math.round(c * 100)}%) and fresh data. Dealer action warranted.` };
   }
 
   if (p >= 0.60 && c >= 0.60) {
-    return { band: 'MONITOR', reason: `P=${p.toFixed(2)} elevated, C=${c.toFixed(2)} ≥ 0.60 — accumulating signal` };
+    return { band: 'MONITOR', reason: `Elevated risk (${Math.round(p * 100)}%) with moderate evidence (${Math.round(c * 100)}%). Watching for more signal.` };
   }
 
   if (p < 0.45) {
-    return { band: 'SUPPRESSED', reason: `P=${p.toFixed(2)} below 0.45 threshold` };
+    return { band: 'SUPPRESSED', reason: `Risk level (${Math.round(p * 100)}%) is below action threshold` };
   }
 
-  return { band: 'SUPPRESSED', reason: `Unmet escalation/monitor criteria (gap zone) — SUPPRESSED by exhaustion` };
+  return { band: 'SUPPRESSED', reason: `Risk is ${Math.round(p * 100)}% but evidence is only ${Math.round(c * 100)}% — not enough to escalate or monitor. Holding.` };
 }
 
 export function computeStaleness(lastEventAt: string | Date): number {
   const last = new Date(lastEventAt).getTime();
-  const now = Date.now();
-  return Math.max(0, Math.round((now - last) / (24 * 60 * 60 * 1000)));
+  return Math.max(0, Math.round((Date.now() - last) / (24 * 60 * 60 * 1000)));
 }
 
 export async function getGovernanceForVin(vinId: string) {
@@ -45,24 +44,16 @@ export async function getGovernanceForVin(vinId: string) {
 
 export function buildServiceSuggestion(
   vin: typeof vins.$inferSelect,
-  governance: (typeof governanceActions.$inferSelect)[]
+  _governance: (typeof governanceActions.$inferSelect)[]
 ) {
-  const sDays = computeStaleness(vin.last_event_at);
-  const { band } = computeGovernanceBand(vin.posterior_p, vin.posterior_c, sDays);
+  const band = vin.governance_band;
+  const reason = vin.governance_reason;
 
   if (band === 'ESCALATED') {
     return {
       recommended: true,
       urgency: 'immediate' as const,
-      reason: `P=${vin.posterior_p.toFixed(2)} with strong evidence (C=${vin.posterior_c.toFixed(2)}). Dealer engagement warranted.`,
-    };
-  }
-
-  if (band === 'MONITOR' && vin.posterior_p >= 0.70) {
-    return {
-      recommended: true,
-      urgency: 'soon' as const,
-      reason: `Elevated risk (P=${vin.posterior_p.toFixed(2)}) under monitoring. Schedule proactively.`,
+      reason: reason || 'Governance has escalated this vehicle for dealer engagement.',
     };
   }
 
@@ -70,13 +61,13 @@ export function buildServiceSuggestion(
     return {
       recommended: false,
       urgency: 'routine' as const,
-      reason: `Monitoring. Evidence accumulating but below action threshold.`,
+      reason: reason || 'Under monitoring. Evidence is building but not yet sufficient to act.',
     };
   }
 
   return {
     recommended: false,
     urgency: 'none' as const,
-    reason: `Suppressed. ${governance.length > 0 ? 'Governance actions logged.' : 'No active risk.'}`,
+    reason: reason || 'Suppressed. The system does not have enough evidence to recommend action.',
   };
 }
