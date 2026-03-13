@@ -32,54 +32,54 @@ const QUICK_PROMPTS = {
   ],
 };
 
+const TTS_EARLY_THRESHOLD = 120;
+
 export function VoiceOverlay({ open, onClose, scope, vinId }: VoiceOverlayProps) {
   const [input, setInput] = useState('');
   const { isStreaming, text, error, stream, stop, reset } = useVoiceStream();
   const [ttsStatus, setTtsStatus] = useState<'idle' | 'generating' | 'speaking' | 'error'>('idle');
   const [ttsError, setTtsError] = useState<string | null>(null);
   const requestIdRef = useRef(0);
-  const spokenForRequestRef = useRef<number | null>(null);
+  const ttsFiredForRef = useRef<number | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const speakingAbortRef = useRef<AbortController | null>(null);
 
-  const handleSubmit = (message: string) => {
-    if (!message.trim()) return;
-    requestIdRef.current += 1;
-    spokenForRequestRef.current = null;
-    setTtsStatus('idle');
-    setTtsError(null);
+  function stopAudio() {
     speakingAbortRef.current?.abort();
     speakingAbortRef.current = null;
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
       audioRef.current.src = '';
+      audioRef.current = null;
     }
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
+  }
+
+  const handleSubmit = (message: string) => {
+    if (!message.trim()) return;
+    requestIdRef.current += 1;
+    ttsFiredForRef.current = null;
+    setTtsStatus('idle');
+    setTtsError(null);
+    stopAudio();
     stream(scope, vinId || null, message.trim());
     setInput('');
   };
 
-  useEffect(() => {
-    const requestId = requestIdRef.current;
-    if (!open) return;
-    if (isStreaming) return;
-    if (!text || error) return;
-    if (spokenForRequestRef.current === requestId) return;
-
-    spokenForRequestRef.current = requestId;
+  function fireTts(ttsText: string) {
     const controller = new AbortController();
     speakingAbortRef.current = controller;
+    setTtsStatus('generating');
+    setTtsError(null);
 
     (async () => {
-      setTtsStatus('generating');
-      setTtsError(null);
       const res = await fetch(`${API_BASE}/tts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text: ttsText }),
         signal: controller.signal,
       });
 
@@ -88,10 +88,9 @@ export function VoiceOverlay({ open, onClose, scope, vinId }: VoiceOverlayProps)
         const msg = payload?.error || payload?.details || `TTS failed (${res.status})`;
         setTtsStatus('error');
         setTtsError(String(msg));
-        // Fallback: local browser TTS if available (keeps demo alive without external keys).
         if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
           try {
-            const u = new SpeechSynthesisUtterance(text);
+            const u = new SpeechSynthesisUtterance(ttsText);
             u.rate = 0.9;
             u.pitch = 0.85;
             u.volume = 1;
@@ -99,9 +98,7 @@ export function VoiceOverlay({ open, onClose, scope, vinId }: VoiceOverlayProps)
             u.onend = () => setTtsStatus('idle');
             window.speechSynthesis.cancel();
             window.speechSynthesis.speak(u);
-          } catch {
-            // ignore
-          }
+          } catch { /* ignore */ }
         }
         return;
       }
@@ -122,22 +119,26 @@ export function VoiceOverlay({ open, onClose, scope, vinId }: VoiceOverlayProps)
         setTtsError('Audio playback blocked by browser.');
       });
     })().catch(() => {});
+  }
+
+  useEffect(() => {
+    if (!open || error) return;
+    const reqId = requestIdRef.current;
+    if (ttsFiredForRef.current === reqId) return;
+
+    if (isStreaming && text.length >= TTS_EARLY_THRESHOLD) {
+      ttsFiredForRef.current = reqId;
+      fireTts(text);
+    } else if (!isStreaming && text.length > 0) {
+      ttsFiredForRef.current = reqId;
+      fireTts(text);
+    }
   }, [open, isStreaming, text, error]);
 
   const handleClose = () => {
     stop();
     reset();
-    speakingAbortRef.current?.abort();
-    speakingAbortRef.current = null;
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
-      audioRef.current.src = '';
-      audioRef.current = null;
-    }
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
+    stopAudio();
     onClose();
   };
 
@@ -145,7 +146,6 @@ export function VoiceOverlay({ open, onClose, scope, vinId }: VoiceOverlayProps)
     <AnimatePresence>
       {open && (
         <>
-          {/* Backdrop */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -154,7 +154,6 @@ export function VoiceOverlay({ open, onClose, scope, vinId }: VoiceOverlayProps)
             onClick={handleClose}
           />
 
-          {/* Bottom sheet */}
           <motion.div
             initial={{ y: '100%' }}
             animate={{ y: 0 }}
@@ -163,21 +162,19 @@ export function VoiceOverlay({ open, onClose, scope, vinId }: VoiceOverlayProps)
             className="fixed bottom-0 left-0 right-0 z-50 max-h-[70vh]"
           >
             <div className="bg-gravity-elevated/95 backdrop-blur-xl rounded-t-2xl border-t border-gravity-border overflow-hidden">
-              {/* Handle */}
               <div className="flex justify-center pt-3 pb-2">
                 <div className="w-10 h-1 rounded-full bg-gravity-border" />
               </div>
 
-              {/* Header */}
               <div className="px-6 pb-4 flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <PulseIndicator active={isStreaming} size={32} />
+                  <PulseIndicator active={isStreaming || ttsStatus === 'speaking'} size={32} />
                   <div>
                     <h3 className="text-sm font-medium">
                       {scope === 'vin' ? 'Vehicle Health Assistant' : 'Fleet Health Assistant'}
                     </h3>
                     <p className="text-[10px] text-gravity-text-whisper uppercase tracking-widest">
-                      {isStreaming ? 'Analyzing…' : ttsStatus === 'generating' ? 'Voice…' : ttsStatus === 'speaking' ? 'Speaking…' : 'Ready'}
+                      {isStreaming ? 'Thinking…' : ttsStatus === 'generating' ? 'Preparing voice…' : ttsStatus === 'speaking' ? 'Speaking…' : 'Ready'}
                     </p>
                   </div>
                 </div>
@@ -191,7 +188,6 @@ export function VoiceOverlay({ open, onClose, scope, vinId }: VoiceOverlayProps)
                 </button>
               </div>
 
-              {/* Streaming response */}
               <div className="px-6 pb-4">
                 <StreamingText text={text} isStreaming={isStreaming} />
                 {error && (
@@ -204,7 +200,6 @@ export function VoiceOverlay({ open, onClose, scope, vinId }: VoiceOverlayProps)
                 )}
               </div>
 
-              {/* Quick prompts */}
               {!text && !isStreaming && (
                 <div className="px-6 pb-4">
                   <div className="text-[10px] font-semibold uppercase tracking-widest text-gravity-text-whisper mb-2">
@@ -224,7 +219,6 @@ export function VoiceOverlay({ open, onClose, scope, vinId }: VoiceOverlayProps)
                 </div>
               )}
 
-              {/* Input */}
               <div className="px-6 pb-6">
                 <div className="flex gap-2">
                   <input

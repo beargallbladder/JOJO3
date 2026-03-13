@@ -84,7 +84,7 @@ export async function* streamVoiceResponse(params: {
 
     const stream = await client.messages.stream({
       model: 'claude-sonnet-4-6-20250514',
-      max_tokens: 512,
+      max_tokens: 200,
       system: systemPrompt,
       messages: [
         {
