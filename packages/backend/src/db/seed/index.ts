@@ -49,14 +49,23 @@ async function seed() {
       DROP TYPE IF EXISTS governance_band CASCADE;
     `);
 
-    console.log('  Running drizzle-kit migrate to recreate schema...');
-    try {
-      execSync('npx drizzle-kit migrate', { stdio: 'inherit', env: { ...process.env, DATABASE_URL } });
-    } catch (e: any) {
-      console.error('  Migration failed:', e.message);
-      await pool.end();
-      process.exit(1);
-    }
+    console.log('  Creating schema from inline SQL...');
+    await db.execute(sql.raw(`
+      DO $$ BEGIN CREATE TYPE "public"."booking_status" AS ENUM('draft', 'held', 'exported'); EXCEPTION WHEN duplicate_object THEN null; END $$;
+      DO $$ BEGIN CREATE TYPE "public"."governance_band" AS ENUM('ESCALATED', 'MONITOR', 'SUPPRESSED'); EXCEPTION WHEN duplicate_object THEN null; END $$;
+      DO $$ BEGIN CREATE TYPE "public"."pillar_state" AS ENUM('present', 'absent', 'unknown'); EXCEPTION WHEN duplicate_object THEN null; END $$;
+      DO $$ BEGIN CREATE TYPE "public"."risk_band" AS ENUM('critical', 'high', 'medium', 'low'); EXCEPTION WHEN duplicate_object THEN null; END $$;
+      DO $$ BEGIN CREATE TYPE "public"."subsystem" AS ENUM('battery_12v', 'oil_maintenance', 'brake_wear'); EXCEPTION WHEN duplicate_object THEN null; END $$;
+      CREATE TABLE IF NOT EXISTS "dealer_directory" ("id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL, "name" text NOT NULL, "code" text NOT NULL, "metro_area" text NOT NULL, "postal_prefix" text NOT NULL, "address" text NOT NULL, "phone" text NOT NULL, "capabilities" jsonb DEFAULT '[]'::jsonb, "latitude" real NOT NULL, "longitude" real NOT NULL, CONSTRAINT "dealer_directory_code_unique" UNIQUE("code"));
+      CREATE TABLE IF NOT EXISTS "vins" ("id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL, "vin_code" text NOT NULL, "year" integer NOT NULL, "make" text NOT NULL, "model" text NOT NULL, "trim" text NOT NULL, "subsystem" "subsystem" NOT NULL, "posterior_p" real DEFAULT 0 NOT NULL, "posterior_c" real DEFAULT 0 NOT NULL, "posterior_s" real DEFAULT 0 NOT NULL, "risk_band" "risk_band" DEFAULT 'low' NOT NULL, "governance_band" "governance_band" DEFAULT 'SUPPRESSED' NOT NULL, "governance_reason" text DEFAULT '' NOT NULL, "home_area" text, "last_event_at" timestamp with time zone DEFAULT now() NOT NULL, "created_at" timestamp with time zone DEFAULT now() NOT NULL, "updated_at" timestamp with time zone DEFAULT now() NOT NULL, CONSTRAINT "vins_vin_code_unique" UNIQUE("vin_code"));
+      CREATE TABLE IF NOT EXISTS "pillar_events" ("id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL, "vin_id" uuid NOT NULL REFERENCES "vins"("id"), "pillar_name" text NOT NULL, "pillar_state" "pillar_state" NOT NULL, "confidence" real DEFAULT 0.5 NOT NULL, "evidence_source" text NOT NULL, "occurred_at" timestamp with time zone NOT NULL, "metadata" jsonb DEFAULT '{}'::jsonb);
+      CREATE TABLE IF NOT EXISTS "posterior_snapshots" ("id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL, "vin_id" uuid NOT NULL REFERENCES "vins"("id"), "p_score" real NOT NULL, "c_score" real NOT NULL, "s_score" real NOT NULL, "risk_band" "risk_band" NOT NULL, "governance_band" "governance_band" DEFAULT 'SUPPRESSED' NOT NULL, "governance_reason" text DEFAULT '' NOT NULL, "pillar_vector" jsonb DEFAULT '{}'::jsonb, "frame_index" integer NOT NULL, "computed_at" timestamp with time zone DEFAULT now() NOT NULL);
+      CREATE TABLE IF NOT EXISTS "governance_actions" ("id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL, "vin_id" uuid NOT NULL REFERENCES "vins"("id"), "action_type" text NOT NULL, "reason" text NOT NULL, "triggered_by" text NOT NULL, "metadata" jsonb DEFAULT '{}'::jsonb, "created_at" timestamp with time zone DEFAULT now() NOT NULL);
+      CREATE TABLE IF NOT EXISTS "memory_records" ("id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL, "vin_id" uuid NOT NULL REFERENCES "vins"("id"), "record_type" text NOT NULL, "content" text NOT NULL, "source" text NOT NULL, "created_at" timestamp with time zone DEFAULT now() NOT NULL);
+      CREATE TABLE IF NOT EXISTS "fsr_slots" ("id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL, "dealer_id" uuid NOT NULL REFERENCES "dealer_directory"("id"), "date" text NOT NULL, "time_block" text NOT NULL, "capacity" integer DEFAULT 2 NOT NULL, "booked" integer DEFAULT 0 NOT NULL);
+      CREATE TABLE IF NOT EXISTS "vin_preferences" ("id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL, "vin_id" uuid NOT NULL REFERENCES "vins"("id") UNIQUE, "home_area" text, "preferred_dealer_id" uuid REFERENCES "dealer_directory"("id"), "use_preferred_first" integer DEFAULT 1 NOT NULL, "updated_at" timestamp with time zone DEFAULT now() NOT NULL);
+      CREATE TABLE IF NOT EXISTS "booking_drafts" ("id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL, "vin_id" uuid NOT NULL REFERENCES "vins"("id"), "dealer_id" uuid NOT NULL REFERENCES "dealer_directory"("id"), "slot_id" uuid NOT NULL REFERENCES "fsr_slots"("id"), "status" "booking_status" DEFAULT 'draft' NOT NULL, "reason" text NOT NULL, "contact" jsonb DEFAULT '{}'::jsonb, "created_at" timestamp with time zone DEFAULT now() NOT NULL, "updated_at" timestamp with time zone DEFAULT now() NOT NULL);
+    `));
   }
 
   // Generate dealers first (no FK deps)
