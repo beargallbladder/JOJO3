@@ -65,7 +65,35 @@ export function GovernancePanel({ vin, governance, suggestion, sortContext }: Go
         </div>
       </div>
 
-      {/* Sort context */}
+      {/* Closed-loop explanation */}
+      <div className="p-3 rounded-lg border border-gravity-border bg-gravity-surface mb-4">
+        <div className="text-[10px] font-semibold uppercase tracking-widest text-gravity-text-whisper mb-2">
+          What Can Change This
+        </div>
+        <p className="text-[11px] text-gravity-text-secondary mb-2">
+          New evidence arrives asynchronously and updates the assessment in real time:
+        </p>
+        <div className="space-y-1.5 text-[11px]">
+          <div className="flex items-start gap-2">
+            <span className="text-green-400 mt-0.5 shrink-0">+</span>
+            <span className="text-gravity-text-secondary"><span className="text-gravity-text">Dealer repair order (RO)</span> — confirms or contradicts the risk, recalibrates fleet-wide priors</span>
+          </div>
+          <div className="flex items-start gap-2">
+            <span className="text-green-400 mt-0.5 shrink-0">+</span>
+            <span className="text-gravity-text-secondary"><span className="text-gravity-text">Parts purchase</span> — oil filter, battery, brake pads tied to this VIN strengthen resolution confidence</span>
+          </div>
+          <div className="flex items-start gap-2">
+            <span className="text-green-400 mt-0.5 shrink-0">+</span>
+            <span className="text-gravity-text-secondary"><span className="text-gravity-text">Telemetry normalization</span> — vehicle behavior returning to baseline after service</span>
+          </div>
+          <div className="flex items-start gap-2">
+            <span className="text-yellow-400 mt-0.5 shrink-0">~</span>
+            <span className="text-gravity-text-secondary"><span className="text-gravity-text">Time passing without evidence</span> — confidence decays, eventually suppresses the signal</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Operational priority */}
       {sortContext && (
         <div className="p-3 rounded-lg border border-gravity-border bg-gravity-surface mb-4">
           <div className="text-[10px] font-semibold uppercase tracking-widest text-gravity-text-whisper mb-2">
