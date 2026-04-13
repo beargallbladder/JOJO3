@@ -22,7 +22,7 @@ const SEED = 'gravity-lead-demo-v2';
 const random = mulberry32(strToSeed(SEED));
 
 const MAKES_MODELS = [
-  { make: 'Ford', models: [
+  { make: 'Demo Motors', models: [
     { model: 'F-150', trims: ['XL', 'XLT', 'Lariat', 'King Ranch', 'Platinum'] },
     { model: 'F-250', trims: ['XL', 'XLT', 'Lariat', 'King Ranch'] },
     { model: 'Explorer', trims: ['Base', 'XLT', 'Limited', 'ST'] },
@@ -44,7 +44,7 @@ function pick<T>(arr: T[]): T {
 
 function genVinCode(index: number): string {
   const chars = 'ABCDEFGHJKLMNPRSTUVWXYZ0123456789';
-  let code = '1FT';
+  let code = '1HG';
   for (let i = 0; i < 11; i++) {
     code += chars[Math.floor(random() * chars.length)];
   }

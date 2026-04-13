@@ -57,7 +57,7 @@ export function PillarConstellation({ pillars, className }: PillarConstellationP
         Evidence Triangulation
       </div>
       <p className="text-[11px] text-gravity-text-secondary mb-4">
-        Each signal comes from a different Ford data source. When signals agree, confidence rises. When expected signals are missing, confidence drops. New evidence — a dealer repair order, a parts purchase, a telemetry update — can arrive at any time and change this picture.
+        Each signal comes from a different connected data source. When signals agree, confidence rises. When expected signals are missing, confidence drops. New evidence — a dealer repair order, a parts purchase, a telemetry update — can arrive at any time and change this picture.
       </p>
 
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>

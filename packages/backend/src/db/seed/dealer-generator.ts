@@ -59,8 +59,8 @@ export function generateDealers(): { dealers: GeneratedDealer[]; slots: Generate
 
       dealers.push({
         id: dealerId,
-        name: `${namePrefix} Ford ${metro.name}${i > 0 ? ` ${['East', 'West', 'North', 'South', 'Central'][i - 1] || ''}`.trim() : ''}`,
-        code: `FD${metro.prefix}${(dealerIndex + 1).toString().padStart(3, '0')}`,
+        name: `${namePrefix} Motors ${metro.name}${i > 0 ? ` ${['East', 'West', 'North', 'South', 'Central'][i - 1] || ''}`.trim() : ''}`,
+        code: `DM${metro.prefix}${(dealerIndex + 1).toString().padStart(3, '0')}`,
         metro_area: metro.name,
         postal_prefix: metro.prefix,
         address: `${1000 + dealerIndex * 100} Auto Mall Dr, ${metro.name}`,
