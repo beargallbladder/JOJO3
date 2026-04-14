@@ -8,8 +8,7 @@ services:
     runtime: node
     plan: free
     buildCommand: npm ci --include=dev && npm run build --workspace=packages/shared && npm run build --workspace=packages/backend
-    preDeployCommand: FORCE_SEED=1 npx tsx packages/backend/src/db/seed/health-seed.ts
-    startCommand: npm run start --workspace=packages/backend
+    startCommand: FORCE_SEED=1 npx tsx packages/backend/src/db/seed/health-seed.ts && npm run start --workspace=packages/backend
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV

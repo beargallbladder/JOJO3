@@ -25,15 +25,6 @@ interface TwinFrame {
 
 type TwinMode = 'current' | 'projection' | 'comparison';
 
-interface ProtocolInput {
-  id: string;
-  started_weeks_ago: number;
-  onset_weeks: number;
-  peak_weeks: number;
-  target_domains: string[];
-  max_effect?: number;
-}
-
 interface BodyRendererProps {
   snapshotJson?: string;
   protocolsJson?: string;
@@ -43,94 +34,254 @@ interface BodyRendererProps {
   onRegionHover?: (region: RegionState | null) => void;
 }
 
-// Body region positions (normalized 0-1 coordinate space on a human silhouette)
 const REGION_POSITIONS: Record<string, { x: number; y: number; rx: number; ry: number }> = {
-  brain:        { x: 0.50, y: 0.08, rx: 0.07, ry: 0.05 },
-  thyroid:      { x: 0.50, y: 0.18, rx: 0.03, ry: 0.02 },
-  lungs:        { x: 0.50, y: 0.30, rx: 0.12, ry: 0.07 },
-  heart:        { x: 0.44, y: 0.32, rx: 0.04, ry: 0.04 },
-  liver:        { x: 0.40, y: 0.42, rx: 0.06, ry: 0.04 },
-  adrenals:     { x: 0.50, y: 0.43, rx: 0.03, ry: 0.02 },
-  gut:          { x: 0.50, y: 0.50, rx: 0.08, ry: 0.06 },
-  kidneys:      { x: 0.58, y: 0.43, rx: 0.04, ry: 0.03 },
-  reproductive: { x: 0.50, y: 0.58, rx: 0.04, ry: 0.03 },
-  spine:        { x: 0.50, y: 0.40, rx: 0.02, ry: 0.15 },
-  upper_body:   { x: 0.50, y: 0.28, rx: 0.18, ry: 0.10 },
-  lower_body:   { x: 0.50, y: 0.72, rx: 0.10, ry: 0.14 },
-  joints:       { x: 0.50, y: 0.62, rx: 0.14, ry: 0.04 },
-  skin:         { x: 0.50, y: 0.50, rx: 0.22, ry: 0.35 },
-  blood:        { x: 0.55, y: 0.35, rx: 0.03, ry: 0.03 },
-  immune:       { x: 0.45, y: 0.48, rx: 0.03, ry: 0.03 },
+  brain:        { x: 0.50, y: 0.08, rx: 0.06, ry: 0.045 },
+  thyroid:      { x: 0.50, y: 0.16, rx: 0.025, ry: 0.015 },
+  lungs:        { x: 0.50, y: 0.28, rx: 0.11, ry: 0.065 },
+  heart:        { x: 0.45, y: 0.30, rx: 0.035, ry: 0.035 },
+  liver:        { x: 0.41, y: 0.40, rx: 0.05, ry: 0.035 },
+  adrenals:     { x: 0.50, y: 0.41, rx: 0.025, ry: 0.015 },
+  gut:          { x: 0.50, y: 0.48, rx: 0.07, ry: 0.05 },
+  kidneys:      { x: 0.57, y: 0.41, rx: 0.035, ry: 0.025 },
+  reproductive: { x: 0.50, y: 0.56, rx: 0.035, ry: 0.025 },
+  spine:        { x: 0.50, y: 0.38, rx: 0.015, ry: 0.14 },
+  upper_body:   { x: 0.50, y: 0.26, rx: 0.16, ry: 0.09 },
+  lower_body:   { x: 0.50, y: 0.70, rx: 0.09, ry: 0.13 },
+  joints:       { x: 0.50, y: 0.60, rx: 0.12, ry: 0.035 },
+  skin:         { x: 0.50, y: 0.45, rx: 0.19, ry: 0.32 },
+  blood:        { x: 0.54, y: 0.33, rx: 0.025, ry: 0.025 },
+  immune:       { x: 0.46, y: 0.46, rx: 0.025, ry: 0.025 },
 };
 
-// Draw stylized human silhouette
-function drawSilhouette(ctx: CanvasRenderingContext2D, w: number, h: number) {
+// Chi meridian connections — energy flows between these
+const MERIDIANS: [string, string][] = [
+  ['brain', 'thyroid'], ['thyroid', 'heart'], ['thyroid', 'lungs'],
+  ['heart', 'lungs'], ['heart', 'blood'], ['lungs', 'blood'],
+  ['heart', 'liver'], ['liver', 'gut'], ['liver', 'kidneys'],
+  ['gut', 'kidneys'], ['gut', 'reproductive'], ['gut', 'immune'],
+  ['kidneys', 'adrenals'], ['adrenals', 'reproductive'],
+  ['brain', 'spine'], ['spine', 'upper_body'], ['spine', 'lower_body'],
+  ['upper_body', 'joints'], ['lower_body', 'joints'],
+  ['heart', 'upper_body'], ['gut', 'lower_body'],
+  ['immune', 'blood'], ['skin', 'immune'],
+  ['lungs', 'upper_body'], ['kidneys', 'lower_body'],
+];
+
+// Particles flowing along meridians
+interface Particle {
+  meridian: number;
+  t: number;          // 0-1 position along path
+  speed: number;
+  size: number;
+  color: [number, number, number];
+  alpha: number;
+}
+
+function createParticles(count: number): Particle[] {
+  return Array.from({ length: count }, () => ({
+    meridian: Math.floor(Math.random() * MERIDIANS.length),
+    t: Math.random(),
+    speed: 0.0003 + Math.random() * 0.0008,
+    size: 1 + Math.random() * 2,
+    color: [45, 212, 191] as [number, number, number],
+    alpha: 0.2 + Math.random() * 0.5,
+  }));
+}
+
+function lerpColor(a: [number, number, number], b: [number, number, number], t: number): [number, number, number] {
+  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+}
+
+// Anatomical silhouette — smooth, yoga-pose proportions
+function drawBody(ctx: CanvasRenderingContext2D, w: number, h: number, breath: number) {
   const cx = w / 2;
+  const scale = 1 + breath * 0.003;
   ctx.save();
-  ctx.strokeStyle = 'rgba(99, 102, 241, 0.12)';
-  ctx.lineWidth = 1.5;
-  ctx.fillStyle = 'rgba(99, 102, 241, 0.03)';
+  ctx.translate(cx, h * 0.5);
+  ctx.scale(scale, scale);
+  ctx.translate(-cx, -h * 0.5);
 
+  // Outer aura
+  const auraGrad = ctx.createRadialGradient(cx, h * 0.42, h * 0.05, cx, h * 0.42, h * 0.45);
+  auraGrad.addColorStop(0, 'rgba(99, 102, 241, 0.02)');
+  auraGrad.addColorStop(0.5, 'rgba(45, 212, 191, 0.015)');
+  auraGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+  ctx.fillStyle = auraGrad;
+  ctx.fillRect(0, 0, w, h);
+
+  // Body outline — smooth bezier human form
   ctx.beginPath();
+
   // Head
-  ctx.ellipse(cx, h * 0.08, w * 0.055, h * 0.05, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
+  ctx.moveTo(cx, h * 0.02);
+  ctx.bezierCurveTo(cx + w * 0.06, h * 0.02, cx + w * 0.065, h * 0.07, cx + w * 0.055, h * 0.11);
+  ctx.bezierCurveTo(cx + w * 0.045, h * 0.14, cx + w * 0.02, h * 0.145, cx + w * 0.02, h * 0.155);
 
-  // Neck
-  ctx.beginPath();
-  ctx.moveTo(cx - w * 0.02, h * 0.13);
-  ctx.lineTo(cx + w * 0.02, h * 0.13);
-  ctx.lineTo(cx + w * 0.02, h * 0.17);
-  ctx.lineTo(cx - w * 0.02, h * 0.17);
+  // Neck right → shoulder
+  ctx.bezierCurveTo(cx + w * 0.02, h * 0.17, cx + w * 0.08, h * 0.175, cx + w * 0.155, h * 0.195);
+
+  // Right arm
+  ctx.bezierCurveTo(cx + w * 0.19, h * 0.21, cx + w * 0.21, h * 0.30, cx + w * 0.195, h * 0.42);
+  ctx.bezierCurveTo(cx + w * 0.185, h * 0.48, cx + w * 0.18, h * 0.50, cx + w * 0.175, h * 0.52);
+  // Wrist/hand
+  ctx.bezierCurveTo(cx + w * 0.17, h * 0.53, cx + w * 0.16, h * 0.53, cx + w * 0.155, h * 0.52);
+  // Inner arm back up
+  ctx.bezierCurveTo(cx + w * 0.155, h * 0.49, cx + w * 0.16, h * 0.42, cx + w * 0.16, h * 0.32);
+  ctx.bezierCurveTo(cx + w * 0.155, h * 0.25, cx + w * 0.14, h * 0.22, cx + w * 0.12, h * 0.21);
+
+  // Right torso
+  ctx.bezierCurveTo(cx + w * 0.13, h * 0.30, cx + w * 0.12, h * 0.42, cx + w * 0.10, h * 0.52);
+  ctx.bezierCurveTo(cx + w * 0.09, h * 0.57, cx + w * 0.085, h * 0.59, cx + w * 0.08, h * 0.61);
+
+  // Right leg
+  ctx.bezierCurveTo(cx + w * 0.085, h * 0.65, cx + w * 0.09, h * 0.73, cx + w * 0.08, h * 0.83);
+  ctx.bezierCurveTo(cx + w * 0.075, h * 0.88, cx + w * 0.075, h * 0.92, cx + w * 0.08, h * 0.95);
+  // Foot
+  ctx.bezierCurveTo(cx + w * 0.06, h * 0.96, cx + w * 0.04, h * 0.955, cx + w * 0.035, h * 0.94);
+  // Inner leg
+  ctx.bezierCurveTo(cx + w * 0.04, h * 0.90, cx + w * 0.045, h * 0.80, cx + w * 0.03, h * 0.68);
+  ctx.bezierCurveTo(cx + w * 0.02, h * 0.63, cx + w * 0.015, h * 0.61, cx + w * 0.01, h * 0.60);
+
+  // Crotch
+  ctx.bezierCurveTo(cx + w * 0.005, h * 0.60, cx - w * 0.005, h * 0.60, cx - w * 0.01, h * 0.60);
+
+  // Left leg (mirror)
+  ctx.bezierCurveTo(cx - w * 0.015, h * 0.61, cx - w * 0.02, h * 0.63, cx - w * 0.03, h * 0.68);
+  ctx.bezierCurveTo(cx - w * 0.045, h * 0.80, cx - w * 0.04, h * 0.90, cx - w * 0.035, h * 0.94);
+  ctx.bezierCurveTo(cx - w * 0.04, h * 0.955, cx - w * 0.06, h * 0.96, cx - w * 0.08, h * 0.95);
+  ctx.bezierCurveTo(cx - w * 0.075, h * 0.92, cx - w * 0.075, h * 0.88, cx - w * 0.08, h * 0.83);
+  ctx.bezierCurveTo(cx - w * 0.09, h * 0.73, cx - w * 0.085, h * 0.65, cx - w * 0.08, h * 0.61);
+
+  // Left torso
+  ctx.bezierCurveTo(cx - w * 0.085, h * 0.59, cx - w * 0.09, h * 0.57, cx - w * 0.10, h * 0.52);
+  ctx.bezierCurveTo(cx - w * 0.12, h * 0.42, cx - w * 0.13, h * 0.30, cx - w * 0.12, h * 0.21);
+
+  // Left arm
+  ctx.bezierCurveTo(cx - w * 0.14, h * 0.22, cx - w * 0.155, h * 0.25, cx - w * 0.16, h * 0.32);
+  ctx.bezierCurveTo(cx - w * 0.16, h * 0.42, cx - w * 0.155, h * 0.49, cx - w * 0.155, h * 0.52);
+  ctx.bezierCurveTo(cx - w * 0.16, h * 0.53, cx - w * 0.17, h * 0.53, cx - w * 0.175, h * 0.52);
+  ctx.bezierCurveTo(cx - w * 0.18, h * 0.50, cx - w * 0.185, h * 0.48, cx - w * 0.195, h * 0.42);
+  ctx.bezierCurveTo(cx - w * 0.21, h * 0.30, cx - w * 0.19, h * 0.21, cx - w * 0.155, h * 0.195);
+
+  // Left shoulder → neck
+  ctx.bezierCurveTo(cx - w * 0.08, h * 0.175, cx - w * 0.02, h * 0.17, cx - w * 0.02, h * 0.155);
+  ctx.bezierCurveTo(cx - w * 0.02, h * 0.145, cx - w * 0.045, h * 0.14, cx - w * 0.055, h * 0.11);
+  ctx.bezierCurveTo(cx - w * 0.065, h * 0.07, cx - w * 0.06, h * 0.02, cx, h * 0.02);
+
   ctx.closePath();
+
+  // Fill with subtle inner gradient
+  const bodyGrad = ctx.createLinearGradient(cx, h * 0.02, cx, h * 0.95);
+  bodyGrad.addColorStop(0, 'rgba(99, 102, 241, 0.04)');
+  bodyGrad.addColorStop(0.3, 'rgba(45, 212, 191, 0.03)');
+  bodyGrad.addColorStop(0.7, 'rgba(99, 102, 241, 0.025)');
+  bodyGrad.addColorStop(1, 'rgba(45, 212, 191, 0.02)');
+  ctx.fillStyle = bodyGrad;
   ctx.fill();
+
+  // Outline
+  ctx.strokeStyle = 'rgba(99, 102, 241, 0.10)';
+  ctx.lineWidth = 1;
   ctx.stroke();
 
-  // Torso
-  ctx.beginPath();
-  ctx.moveTo(cx - w * 0.15, h * 0.19);
-  ctx.quadraticCurveTo(cx - w * 0.17, h * 0.35, cx - w * 0.10, h * 0.55);
-  ctx.lineTo(cx - w * 0.08, h * 0.60);
-  ctx.lineTo(cx + w * 0.08, h * 0.60);
-  ctx.lineTo(cx + w * 0.10, h * 0.55);
-  ctx.quadraticCurveTo(cx + w * 0.17, h * 0.35, cx + w * 0.15, h * 0.19);
-  ctx.closePath();
-  ctx.fill();
+  // Second, softer outline for depth
+  ctx.strokeStyle = 'rgba(99, 102, 241, 0.04)';
+  ctx.lineWidth = 4;
   ctx.stroke();
-
-  // Arms
-  for (const sign of [-1, 1]) {
-    ctx.beginPath();
-    ctx.moveTo(cx + sign * w * 0.15, h * 0.20);
-    ctx.quadraticCurveTo(cx + sign * w * 0.22, h * 0.35, cx + sign * w * 0.20, h * 0.50);
-    ctx.quadraticCurveTo(cx + sign * w * 0.19, h * 0.55, cx + sign * w * 0.18, h * 0.50);
-    ctx.quadraticCurveTo(cx + sign * w * 0.18, h * 0.35, cx + sign * w * 0.13, h * 0.22);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-  }
-
-  // Legs
-  for (const sign of [-1, 1]) {
-    ctx.beginPath();
-    ctx.moveTo(cx + sign * w * 0.06, h * 0.60);
-    ctx.quadraticCurveTo(cx + sign * w * 0.08, h * 0.75, cx + sign * w * 0.07, h * 0.92);
-    ctx.lineTo(cx + sign * w * 0.03, h * 0.92);
-    ctx.quadraticCurveTo(cx + sign * w * 0.02, h * 0.75, cx + sign * w * 0.01, h * 0.60);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-  }
 
   ctx.restore();
 }
 
-function drawRegion(
+// Draw energy flowing along a meridian path
+function drawMeridian(
+  ctx: CanvasRenderingContext2D,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  w: number, h: number,
+  intensity: number,
+  time: number,
+) {
+  const x1 = from.x * w, y1 = from.y * h;
+  const x2 = to.x * w, y2 = to.y * h;
+
+  // Curved path with control point offset
+  const mx = (x1 + x2) / 2;
+  const my = (y1 + y2) / 2;
+  const dx = x2 - x1, dy = y2 - y1;
+  const cpx = mx + dy * 0.15;
+  const cpy = my - dx * 0.15;
+
+  const alpha = intensity * 0.08;
+  if (alpha < 0.005) return;
+
+  ctx.save();
+  ctx.strokeStyle = `rgba(99, 102, 241, ${alpha})`;
+  ctx.lineWidth = 0.5 + intensity * 0.5;
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.quadraticCurveTo(cpx, cpy, x2, y2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// Draw a single flowing particle
+function drawParticle(
+  ctx: CanvasRenderingContext2D,
+  p: Particle,
+  w: number, h: number,
+  frame: TwinFrame | null,
+) {
+  const [fromId, toId] = MERIDIANS[p.meridian];
+  const from = REGION_POSITIONS[fromId];
+  const to = REGION_POSITIONS[toId];
+  if (!from || !to) return;
+
+  const x1 = from.x * w, y1 = from.y * h;
+  const x2 = to.x * w, y2 = to.y * h;
+  const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+  const dx = x2 - x1, dy = y2 - y1;
+  const cpx = mx + dy * 0.15, cpy = my - dx * 0.15;
+
+  // Quadratic bezier position at t
+  const t = p.t;
+  const it = 1 - t;
+  const px = it * it * x1 + 2 * it * t * cpx + t * t * x2;
+  const py = it * it * y1 + 2 * it * t * cpy + t * t * y2;
+
+  // Color adapts to the region state it's flowing through
+  let [r, g, b] = p.color;
+  if (frame) {
+    const nearId = t < 0.5 ? fromId : toId;
+    const region = frame.regions.find(reg => reg.id === nearId);
+    if (region) {
+      const [cr, cg, cb] = region.color;
+      r = cr * 255; g = cg * 255; b = cb * 255;
+    }
+  }
+
+  // Soft glow
+  const fadeAlpha = p.alpha * Math.sin(t * Math.PI);
+  const grad = ctx.createRadialGradient(px, py, 0, px, py, p.size * 3);
+  grad.addColorStop(0, `rgba(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)}, ${fadeAlpha * 0.6})`);
+  grad.addColorStop(0.5, `rgba(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)}, ${fadeAlpha * 0.15})`);
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(px, py, p.size * 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Bright core
+  ctx.fillStyle = `rgba(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)}, ${fadeAlpha * 0.9})`;
+  ctx.beginPath();
+  ctx.arc(px, py, p.size * 0.6, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// Draw a region as a soft organic glow
+function drawRegionGlow(
   ctx: CanvasRenderingContext2D,
   region: RegionState,
-  w: number,
-  h: number,
+  w: number, h: number,
   time: number,
 ) {
   const pos = REGION_POSITIONS[region.id];
@@ -138,42 +289,53 @@ function drawRegion(
 
   const cx = pos.x * w;
   const cy = pos.y * h;
-  const rx = pos.rx * w;
-  const ry = pos.ry * h;
+  const baseRx = pos.rx * w;
+  const baseRy = pos.ry * h;
 
   const [r, g, b, a] = region.color;
+  const ri = Math.round(r * 255), gi = Math.round(g * 255), bi = Math.round(b * 255);
   const alpha = a * region.confidence;
 
-  // Pulsing glow
-  const pulsePhase = Math.sin(time * region.pulse_rate * 0.001) * 0.5 + 0.5;
-  const glowRadius = rx * (1.5 + pulsePhase * 0.8) * region.glow_intensity;
+  // Breathing pulse per region
+  const pulse = Math.sin(time * region.pulse_rate * 0.001) * 0.5 + 0.5;
+  const rx = baseRx * (1.0 + pulse * 0.15);
+  const ry = baseRy * (1.0 + pulse * 0.15);
 
-  if (region.glow_intensity > 0.05) {
-    const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, glowRadius);
-    gradient.addColorStop(0, `rgba(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)}, ${alpha * 0.35 * (0.7 + pulsePhase * 0.3)})`);
-    gradient.addColorStop(0.5, `rgba(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)}, ${alpha * 0.12})`);
-    gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+  if (region.glow_intensity < 0.02) return;
 
-    ctx.save();
-    ctx.fillStyle = gradient;
-    ctx.beginPath();
-    ctx.ellipse(cx, cy, glowRadius, glowRadius * (ry / rx), 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-  }
+  // Outer halo
+  const haloR = Math.max(rx, ry) * (2.0 + pulse * 0.5) * region.glow_intensity;
+  const halo = ctx.createRadialGradient(cx, cy, 0, cx, cy, haloR);
+  halo.addColorStop(0, `rgba(${ri}, ${gi}, ${bi}, ${alpha * 0.20 * (0.7 + pulse * 0.3)})`);
+  halo.addColorStop(0.3, `rgba(${ri}, ${gi}, ${bi}, ${alpha * 0.08})`);
+  halo.addColorStop(0.6, `rgba(${ri}, ${gi}, ${bi}, ${alpha * 0.02})`);
+  halo.addColorStop(1, 'rgba(0,0,0,0)');
 
-  // Core region fill
   ctx.save();
-  ctx.globalAlpha = alpha * (0.5 + pulsePhase * 0.15);
-  ctx.fillStyle = `rgb(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)})`;
+  ctx.fillStyle = halo;
   ctx.beginPath();
-  ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+  ctx.ellipse(cx, cy, haloR, haloR * (ry / Math.max(rx, 0.01)), 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Border
-  ctx.strokeStyle = `rgba(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)}, ${alpha * 0.6})`;
-  ctx.lineWidth = 1;
-  ctx.stroke();
+  // Inner core — soft, not hard-edged
+  const coreGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(rx, ry));
+  coreGrad.addColorStop(0, `rgba(${ri}, ${gi}, ${bi}, ${alpha * 0.35 * (0.8 + pulse * 0.2)})`);
+  coreGrad.addColorStop(0.6, `rgba(${ri}, ${gi}, ${bi}, ${alpha * 0.10})`);
+  coreGrad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = coreGrad;
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, rx * 1.2, ry * 1.2, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Bright center point for key organs
+  if (['heart', 'brain', 'lungs', 'gut', 'liver'].includes(region.id) && region.heat > 0.3) {
+    const sparkAlpha = alpha * 0.5 * (0.6 + pulse * 0.4);
+    ctx.fillStyle = `rgba(255, 255, 255, ${sparkAlpha * 0.3})`;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 2 + pulse * 1.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
   ctx.restore();
 }
 
@@ -181,54 +343,36 @@ export function BodyRenderer({ snapshotJson, protocolsJson, projectionWeeks = 0,
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const frameRef = useRef<TwinFrame | null>(null);
   const animRef = useRef<number>(0);
+  const particlesRef = useRef<Particle[]>(createParticles(60));
   const [wasmReady, setWasmReady] = useState(false);
   const wasmRef = useRef<any>(null);
   const [hoveredRegion, setHoveredRegion] = useState<RegionState | null>(null);
 
-  // Load WASM
   useEffect(() => {
     let cancelled = false;
     loadTwinWasm().then((wasm) => {
-      if (!cancelled) {
-        wasmRef.current = wasm;
-        setWasmReady(true);
-      }
+      if (!cancelled) { wasmRef.current = wasm; setWasmReady(true); }
     });
     return () => { cancelled = true; };
   }, []);
 
-  // Compute frame when snapshot or mode changes
   useEffect(() => {
-    if (!snapshotJson) {
-      frameRef.current = null;
-      return;
-    }
-
+    if (!snapshotJson) { frameRef.current = null; return; }
     const wasm = wasmRef.current;
 
-    // Protocol projection mode — use the new WASM function
     if (mode === 'projection' && wasm?.compute_protocol_projection && protocolsJson) {
       try {
         const cohortJson = JSON.stringify({ median_response: 0.6 });
         const frameJson = wasm.compute_protocol_projection(snapshotJson, protocolsJson, cohortJson, projectionWeeks, Date.now());
         frameRef.current = JSON.parse(frameJson);
         return;
-      } catch {
-        // fall through to current mode
-      }
+      } catch { /* fall through */ }
     }
 
-    // Current state mode
     if (wasm?.map_signals_to_regions && wasm?.compute_twin_frame) {
       const signals = wasm.map_signals_to_regions(snapshotJson);
-      const frameJson = wasm.compute_twin_frame(signals, Date.now());
-      try {
-        frameRef.current = JSON.parse(frameJson);
-      } catch {
-        frameRef.current = null;
-      }
+      try { frameRef.current = JSON.parse(wasm.compute_twin_frame(signals, Date.now())); } catch { frameRef.current = null; }
     } else {
-      // JS fallback
       try {
         const snap = JSON.parse(snapshotJson);
         const p = snap.p_score ?? 0.3;
@@ -237,36 +381,22 @@ export function BodyRenderer({ snapshotJson, protocolsJson, projectionWeeks = 0,
           const heat = p * (0.5 + Math.random() * 0.5);
           const recovery = (1 - p) * (0.6 + Math.random() * 0.4);
           return {
-            id,
-            heat,
-            recovery,
+            id, heat, recovery,
             pulse_rate: 0.5 + heat * 2,
-            glow_intensity: heat * c,
+            glow_intensity: 0.3 + heat * c * 0.7,
             color: [
-              heat > 0.5 ? 0.9 : 0.3,
-              heat > 0.5 ? 0.5 : 0.75,
-              heat > 0.5 ? 0.3 : 0.65,
+              heat > 0.5 ? 0.95 : 0.18, heat > 0.5 ? 0.44 : 0.83, heat > 0.5 ? 0.40 : 0.75,
               0.6 + heat * 0.4,
             ] as [number, number, number, number],
-            trend_arrow: 0,
-            confidence: c,
+            trend_arrow: 0, confidence: Math.max(c, 0.4),
             label: id.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
           };
         });
-        frameRef.current = {
-          timestamp: Date.now(),
-          regions,
-          global_recovery: 1 - p,
-          global_stress: p,
-          dominant_system: 'heart',
-        };
-      } catch {
-        frameRef.current = null;
-      }
+        frameRef.current = { timestamp: Date.now(), regions, global_recovery: 1 - p, global_stress: p, dominant_system: 'heart' };
+      } catch { frameRef.current = null; }
     }
   }, [snapshotJson, protocolsJson, projectionWeeks, mode, wasmReady]);
 
-  // Animation loop
   const render = useCallback((time: number) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -283,24 +413,56 @@ export function BodyRenderer({ snapshotJson, protocolsJson, projectionWeeks = 0,
 
     ctx.clearRect(0, 0, w, h);
 
-    drawSilhouette(ctx, w, h);
+    const breath = Math.sin(time * 0.0008);
+
+    // 1. Body silhouette with breathing
+    drawBody(ctx, w, h, breath);
 
     const frame = frameRef.current;
     if (frame) {
-      // Draw skin layer first (largest, most transparent)
-      const skinRegion = frame.regions.find(r => r.id === 'skin');
-      if (skinRegion) drawRegion(ctx, skinRegion, w, h, time);
+      // 2. Meridian lines (chi paths)
+      for (const [fromId, toId] of MERIDIANS) {
+        const from = REGION_POSITIONS[fromId];
+        const to = REGION_POSITIONS[toId];
+        if (!from || !to) continue;
+        const fromR = frame.regions.find(r => r.id === fromId);
+        const toR = frame.regions.find(r => r.id === toId);
+        const intensity = ((fromR?.heat ?? 0) + (toR?.heat ?? 0)) / 2;
+        drawMeridian(ctx, from, to, w, h, intensity + 0.2, time);
+      }
 
-      // Then organs, from back to front
+      // 3. Region glows — layered, back to front
       const drawOrder = [
-        'spine', 'upper_body', 'lower_body',
+        'skin', 'spine', 'upper_body', 'lower_body',
         'lungs', 'liver', 'gut', 'kidneys',
         'heart', 'brain', 'thyroid', 'adrenals',
         'reproductive', 'joints', 'blood', 'immune',
       ];
       for (const id of drawOrder) {
         const region = frame.regions.find(r => r.id === id);
-        if (region) drawRegion(ctx, region, w, h, time);
+        if (region) drawRegionGlow(ctx, region, w, h, time);
+      }
+
+      // 4. Flowing particles — chi energy
+      const particles = particlesRef.current;
+      for (const p of particles) {
+        p.t += p.speed * (1 + (frame.global_stress * 0.5));
+        if (p.t > 1) {
+          p.t = 0;
+          p.meridian = Math.floor(Math.random() * MERIDIANS.length);
+          p.speed = 0.0003 + Math.random() * 0.0008;
+          p.alpha = 0.2 + Math.random() * 0.5;
+
+          // Recovery = teal, stress = coral/amber
+          if (frame.global_recovery > 0.6) {
+            p.color = [45, 212, 191];
+          } else if (frame.global_stress > 0.7) {
+            p.color = [249, 112, 102];
+          } else {
+            p.color = [167, 139, 250];
+          }
+        }
+        drawParticle(ctx, p, w, h, frame);
       }
     }
 
@@ -312,7 +474,6 @@ export function BodyRenderer({ snapshotJson, protocolsJson, projectionWeeks = 0,
     return () => cancelAnimationFrame(animRef.current);
   }, [render]);
 
-  // Hit testing for hover
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas || !frameRef.current) return;
@@ -321,7 +482,7 @@ export function BodyRenderer({ snapshotJson, protocolsJson, projectionWeeks = 0,
     const my = (e.clientY - rect.top) / rect.height;
 
     let closest: RegionState | null = null;
-    let closestDist = 0.05;
+    let closestDist = 0.06;
 
     for (const region of frameRef.current.regions) {
       const pos = REGION_POSITIONS[region.id];
@@ -329,12 +490,8 @@ export function BodyRenderer({ snapshotJson, protocolsJson, projectionWeeks = 0,
       const dx = (mx - pos.x) / pos.rx;
       const dy = (my - pos.y) / pos.ry;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < 1 && dist < closestDist) {
-        closestDist = dist;
-        closest = region;
-      }
+      if (dist < 1.2 && dist < closestDist) { closestDist = dist; closest = region; }
     }
-
     setHoveredRegion(closest);
     onRegionHover?.(closest);
   }, [onRegionHover]);
@@ -348,18 +505,18 @@ export function BodyRenderer({ snapshotJson, protocolsJson, projectionWeeks = 0,
         onMouseLeave={() => { setHoveredRegion(null); onRegionHover?.(null); }}
       />
       {hoveredRegion && (
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-gravity-elevated/95 backdrop-blur-sm border border-gravity-border rounded-lg px-4 py-2.5 text-center pointer-events-none animate-fade-in">
-          <p className="text-xs font-semibold text-gravity-text">{hoveredRegion.label}</p>
-          <div className="flex gap-4 mt-1 text-[10px] text-gravity-text-secondary">
-            <span>Stress: <span className="text-health-coral font-mono">{Math.round(hoveredRegion.heat * 100)}%</span></span>
-            <span>Recovery: <span className="text-health-teal font-mono">{Math.round(hoveredRegion.recovery * 100)}%</span></span>
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-gravity-bg/90 backdrop-blur-md border border-gravity-border/50 rounded-xl px-5 py-3 text-center pointer-events-none animate-fade-in">
+          <p className="text-xs font-medium text-gravity-text tracking-wide">{hoveredRegion.label}</p>
+          <div className="flex gap-5 mt-1.5 text-[10px]">
+            <span className="text-gravity-text-secondary">Stress <span className="text-health-coral font-mono font-medium">{Math.round(hoveredRegion.heat * 100)}%</span></span>
+            <span className="text-gravity-text-secondary">Recovery <span className="text-health-teal font-mono font-medium">{Math.round(hoveredRegion.recovery * 100)}%</span></span>
           </div>
         </div>
       )}
       {frameRef.current && (
-        <div className="absolute top-3 right-3 text-[10px] text-gravity-text-whisper font-mono flex items-center gap-1.5">
+        <div className="absolute top-3 right-3 text-[10px] text-gravity-text-whisper/60 font-mono flex items-center gap-1.5">
           <div className={`w-1.5 h-1.5 rounded-full animate-pulse-soft ${mode === 'projection' ? 'bg-gravity-accent-warm' : 'bg-health-teal'}`} />
-          {mode === 'projection' ? `WASM Projection +${projectionWeeks}w` : 'WASM Twin'}
+          {mode === 'projection' ? `+${projectionWeeks}w` : 'live'}
         </div>
       )}
     </div>
