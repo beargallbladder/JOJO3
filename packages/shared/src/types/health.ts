@@ -3,7 +3,7 @@ import type { HealthSignalId } from '../constants/health-signals.js';
 import type { RiskBand, GovernanceBand } from './vin.js';
 
 export type { RiskBand, GovernanceBand };
-export type SignalState = 'present' | 'absent' | 'unknown';
+export type SignalState = 'final' | 'preliminary' | 'registered' | 'amended' | 'corrected' | 'cancelled' | 'entered-in-error' | 'unknown';
 
 // ---- Subjects (replaces VIN) ----
 

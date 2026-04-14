@@ -87,12 +87,12 @@ supportingRoute.get('/org/stats', async (c) => {
   const [bandCounts, domainCounts, protocolCounts, totalSubjects] = await Promise.all([
     healthDb.execute(sql`
       SELECT governance_band, count(*)::int AS count
-      FROM subjects WHERE org_id = ${orgId}
+      FROM subject_current_state WHERE org_id = ${orgId}
       GROUP BY governance_band
     `),
     healthDb.execute(sql`
       SELECT primary_domain, count(*)::int AS count
-      FROM subjects WHERE org_id = ${orgId}
+      FROM subject_current_state WHERE org_id = ${orgId}
       GROUP BY primary_domain
     `),
     healthDb.execute(sql`

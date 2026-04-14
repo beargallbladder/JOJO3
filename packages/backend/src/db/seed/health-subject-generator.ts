@@ -206,16 +206,19 @@ function getRiskBand(p: number): 'critical' | 'high' | 'medium' | 'low' {
 
 function assignStoryline(): HealthStoryline {
   const r = random();
-  if (r < 0.12) return HEALTH_STORYLINES[0];  // overtraining
-  if (r < 0.24) return HEALTH_STORYLINES[1];  // metabolic improvement
-  if (r < 0.34) return HEALTH_STORYLINES[2];  // hormonal response
-  if (r < 0.44) return HEALTH_STORYLINES[3];  // sleep disruption
-  if (r < 0.52) return HEALTH_STORYLINES[4];  // post-injury
-  if (r < 0.60) return HEALTH_STORYLINES[5];  // stress-driven
-  if (r < 0.72) return HEALTH_STORYLINES[6];  // new client baseline
-  if (r < 0.80) return HEALTH_STORYLINES[7];  // plateau
-  if (r < 0.90) return HEALTH_STORYLINES[8];  // strong responder
-  return HEALTH_STORYLINES[9];                 // data gap
+  if (r < 0.10) return HEALTH_STORYLINES[0];  // overtraining
+  if (r < 0.20) return HEALTH_STORYLINES[1];  // metabolic improvement
+  if (r < 0.28) return HEALTH_STORYLINES[2];  // hormonal response
+  if (r < 0.36) return HEALTH_STORYLINES[3];  // sleep disruption
+  if (r < 0.43) return HEALTH_STORYLINES[4];  // post-injury
+  if (r < 0.50) return HEALTH_STORYLINES[5];  // stress-driven
+  if (r < 0.60) return HEALTH_STORYLINES[6];  // new client baseline
+  if (r < 0.68) return HEALTH_STORYLINES[7];  // plateau
+  if (r < 0.76) return HEALTH_STORYLINES[8];  // strong responder
+  if (r < 0.82) return HEALTH_STORYLINES[9];  // data gap
+  if (r < 0.88) return HEALTH_STORYLINES[10]; // acute cardio crisis → ESCALATED
+  if (r < 0.94) return HEALTH_STORYLINES[11]; // metabolic emergency → ESCALATED
+  return HEALTH_STORYLINES[12];               // MSK breakdown → ESCALATED
 }
 
 function pickDomains(storyline: HealthStoryline): HealthDomainId[] {

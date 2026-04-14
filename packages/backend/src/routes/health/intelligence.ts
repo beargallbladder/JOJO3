@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { healthDb } from '../../config/health-database.js';
 import {
   subjects, healthSignalEvents, healthSnapshots, protocolAssignments,
+  subjectCurrentState,
 } from '../../db/health-schema.js';
 import { eq, and, desc, asc, sql, gte } from 'drizzle-orm';
 import { envelope } from '../../lib/api-envelope.js';
@@ -51,8 +52,13 @@ interface ProtocolTrack {
   narrative: string;
 }
 
+const INVERSE_SIGNALS = new Set([
+  'lab_crp', 'lab_cortisol', 'lab_a1c', 'lab_creatine_kinase', 'lab_fasting_glucose',
+  'lab_thyroid_tsh', 'resting_hr', 'self_pain', 'resting_bp_systolic', 'resting_bp_diastolic', 'lab_apob',
+]);
+
 function rangeBadge(value: number, range: [number, number], signalId: string): LabMarker['range_badge'] {
-  const isInverse = ['lab_crp', 'lab_cortisol', 'lab_a1c', 'lab_creatine_kinase', 'lab_fasting_glucose', 'lab_thyroid_tsh'].includes(signalId);
+  const isInverse = INVERSE_SIGNALS.has(signalId);
   if (isInverse) {
     if (value < range[0]) return 'performance';
     if (value <= range[1]) return 'normal';
@@ -179,7 +185,16 @@ intelligenceRoute.get('/:id/intelligence', async (c) => {
     .where(and(eq(subjects.id, subjectId), eq(subjects.org_id, orgId)));
   if (!subject) return c.json({ error: 'Subject not found' }, 404);
 
-  const domain = subject.primary_domain as HealthDomainId;
+  const [currentState] = await healthDb.select().from(subjectCurrentState)
+    .where(eq(subjectCurrentState.subject_id, subjectId));
+
+  const p = currentState?.posterior_p ?? subject.posterior_p;
+  const pVar = currentState?.posterior_p_var ?? subject.posterior_p_var;
+  const cScore = currentState?.posterior_c ?? subject.posterior_c;
+  const sScore = currentState?.posterior_s ?? subject.posterior_s;
+  const govBand = (currentState?.governance_band ?? subject.governance_band) as string;
+  const govReason = currentState?.governance_reason ?? subject.governance_reason;
+  const domain = (currentState?.primary_domain ?? subject.primary_domain) as HealthDomainId;
   const domainSignals = DOMAIN_SIGNALS[domain] ?? [];
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
@@ -235,8 +250,8 @@ intelligenceRoute.get('/:id/intelligence', async (c) => {
       current_value: current.raw_value,
       previous_value: previous?.raw_value ?? null,
       delta_pct: deltaPct != null ? Math.round(deltaPct * 10) / 10 : null,
-      normal_range: def.normalRange,
-      range_badge: current.raw_value != null ? rangeBadge(current.raw_value, def.normalRange, sigId) : 'no_data',
+      normal_range: def.normalRange ?? [0, 0],
+      range_badge: current.raw_value != null && def.normalRange ? rangeBadge(current.raw_value, def.normalRange, sigId) : 'no_data',
       last_draw: current.occurred_at.toISOString(),
       source: current.source_type,
       trend_direction: slopeDirection(values.reverse()),
@@ -269,7 +284,7 @@ intelligenceRoute.get('/:id/intelligence', async (c) => {
       label: def.label,
       value: current.raw_value,
       unit: def.unit,
-      ref_range: `${def.normalRange[0]}–${def.normalRange[1]}`,
+      ref_range: def.normalRange ? `${def.normalRange[0]}–${def.normalRange[1]}` : '—',
       date: current.occurred_at.toISOString(),
       trend,
       delta_text: deltaText,
@@ -314,7 +329,7 @@ intelligenceRoute.get('/:id/intelligence', async (c) => {
     const values = signalEvents.filter(e => e.raw_value != null).map(e => e.raw_value as number);
     const slope = slopeDirection(values);
 
-    const isInverse = ['lab_crp', 'lab_cortisol', 'lab_a1c', 'lab_creatine_kinase', 'lab_fasting_glucose', 'resting_hr', 'self_pain'].includes(monitored);
+    const isInverse = INVERSE_SIGNALS.has(monitored);
     const trend: ProtocolTrack['trend'] =
       slope === 'insufficient' ? 'insufficient'
       : (slope === 'down' && isInverse) || (slope === 'up' && !isInverse) ? 'improving'
@@ -345,7 +360,6 @@ intelligenceRoute.get('/:id/intelligence', async (c) => {
   }
 
   // ---- Build coach summary ----
-  const p = subject.posterior_p;
   const constraintName = getConstraintName(domain, p);
   const headline = generateCoachHeadline(domain, p);
 
@@ -380,15 +394,15 @@ intelligenceRoute.get('/:id/intelligence', async (c) => {
     };
     body = domainNarrative[domain] || `${signalSummary}.${raceContext ? `${raceContext}.` : ''}`;
   } else {
-    body = subject.governance_reason || `${sport} athlete in ${phase} phase. No significant trends detected in recent data.`;
+    body = govReason || `${sport} athlete in ${phase} phase. No significant trends detected in recent data.`;
   }
 
-  const urgency = subject.governance_band === 'ESCALATED' ? 'high'
-    : subject.governance_band === 'MONITOR' ? 'medium'
+  const urgency = govBand === 'ESCALATED' ? 'high'
+    : govBand === 'MONITOR' ? 'medium'
     : 'low';
 
   const clinicalActions = generateClinicalActions(domain, p, labMarkers, protocolTracking);
-  const action = generateAction(domain, p, subject.governance_band, activeProtocols.map(p => p.protocol_id), clinicalActions);
+  const action = generateAction(domain, p, govBand, activeProtocols.map(pa => pa.protocol_id), clinicalActions);
 
   return envelope(c, {
     coach_summary: {
@@ -404,12 +418,12 @@ intelligenceRoute.get('/:id/intelligence', async (c) => {
         name: constraintName,
         domain,
         domain_label: DOMAIN_LABELS[domain] ?? domain,
-        p_score: subject.posterior_p,
-        c_score: subject.posterior_c,
-        s_score: subject.posterior_s,
-        p_var: subject.posterior_p_var,
-        governance_band: subject.governance_band,
-        governance_reason: subject.governance_reason,
+        p_score: p,
+        c_score: cScore,
+        s_score: sScore,
+        p_var: pVar,
+        governance_band: govBand,
+        governance_reason: govReason,
       },
       evidence_chain: evidenceChain,
       performance_systems: performanceSystems,

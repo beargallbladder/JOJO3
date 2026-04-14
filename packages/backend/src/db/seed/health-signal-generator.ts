@@ -61,7 +61,7 @@ export interface GeneratedSignalEvent {
   subject_id: string;
   org_id: string;
   signal_name: string;
-  signal_state: 'present' | 'absent' | 'unknown';
+  signal_state: 'final' | 'preliminary' | 'cancelled' | 'unknown';
   confidence: number;
   source_type: string;
   raw_value: number | null;
@@ -83,7 +83,7 @@ export interface GeneratedHealthSnapshot {
   risk_band: 'critical' | 'high' | 'medium' | 'low';
   governance_band: GovBand;
   governance_reason: string;
-  signal_vector: Record<string, 'present' | 'absent' | 'unknown'>;
+  signal_vector: Record<string, 'final' | 'cancelled' | 'unknown'>;
   frame_index: number;
   computed_at: Date;
 }
@@ -130,7 +130,7 @@ function generateRawValue(
   rng: () => number,
 ): { raw: number; normalized: number } {
   const def = HEALTH_SIGNALS[signalId];
-  if (!def || def.unit === 'text') return { raw: 0, normalized: 0.5 };
+  if (!def || def.unit === 'text' || !def.normalRange) return { raw: 0, normalized: 0.5 };
 
   const [normLo, normHi] = def.normalRange;
   const [fullLo, fullHi] = def.fullRange;
@@ -140,13 +140,17 @@ function generateRawValue(
   // storylineBias: 0 = healthy, 1 = concerning
   // protocolEffect: 0 = no effect, positive = improving
   const healthyTarget = normMid + (normHi - normMid) * 0.2;
-  const concernTarget = signalId.startsWith('self_pain') || signalId === 'lab_crp' || signalId === 'lab_cortisol' || signalId === 'resting_hr' || signalId === 'lab_a1c'
+  const INVERSE_SIGNALS = new Set([
+    'self_pain', 'lab_crp', 'lab_cortisol', 'resting_hr', 'lab_a1c',
+    'lab_thyroid_tsh', 'lab_creatine_kinase', 'lab_fasting_glucose',
+    'resting_bp_systolic', 'resting_bp_diastolic', 'lab_apob',
+  ]);
+
+  const concernTarget = INVERSE_SIGNALS.has(signalId)
     ? normHi + (fullHi - normHi) * 0.4   // high = bad for these
     : normLo - (normLo - fullLo) * 0.3;  // low = bad for HRV, sleep, recovery, etc.
 
-  const isInverseSignal = signalId === 'self_pain' || signalId === 'lab_crp' || signalId === 'lab_cortisol'
-    || signalId === 'resting_hr' || signalId === 'lab_a1c' || signalId === 'lab_thyroid_tsh'
-    || signalId === 'lab_creatine_kinase' || signalId === 'lab_fasting_glucose';
+  const isInverseSignal = INVERSE_SIGNALS.has(signalId);
 
   const base = healthyTarget + (concernTarget - healthyTarget) * storylineBias;
   const withProtocol = isInverseSignal
@@ -280,7 +284,7 @@ export function generateHealthSignalData(subjects: GeneratedSubject[]) {
           subject_id: subject.id,
           org_id: subject.orgId,
           signal_name: signalId,
-          signal_state: 'present',
+          signal_state: 'final',
           confidence: Math.round(conf * 100) / 100,
           source_type: sourceId,
           raw_value: raw,
@@ -305,7 +309,7 @@ export function generateHealthSignalData(subjects: GeneratedSubject[]) {
             subject_id: subject.id,
             org_id: subject.orgId,
             signal_name: signalId,
-            signal_state: 'present',
+            signal_state: 'final',
             confidence: clamp01(0.6 + rng() * 0.2),
             source_type: 'self_report',
             raw_value: raw,
@@ -338,7 +342,7 @@ export function generateHealthSignalData(subjects: GeneratedSubject[]) {
           subject_id: subject.id,
           org_id: subject.orgId,
           signal_name: signalId,
-          signal_state: 'present',
+          signal_state: 'final',
           confidence: clamp01(0.85 + rng() * 0.1),
           source_type: bProfile?.provider ?? 'function_health',
           raw_value: raw,
@@ -365,7 +369,7 @@ export function generateHealthSignalData(subjects: GeneratedSubject[]) {
       const computedAtMs = startTime + t * ninetyDaysMs;
       const computedAt = new Date(computedAtMs);
 
-      const vector: Record<string, 'present' | 'absent' | 'unknown'> = {};
+      const vector: Record<string, 'final' | 'cancelled' | 'unknown'> = {};
       let observed = 0;
       let present = 0;
       let absent = 0;
@@ -381,8 +385,8 @@ export function generateHealthSignalData(subjects: GeneratedSubject[]) {
         const isStorySig = storyline.activeSignals.includes(sig);
         const activation = isStorySig ? clamp01(0.25 + t * 0.6 + jitter(rng, 0.12)) : clamp01(0.15 + jitter(rng, 0.08));
 
-        if (rng() < activation) { vector[sig] = 'present'; present++; }
-        else if (rng() < 0.15) { vector[sig] = 'absent'; absent++; }
+        if (rng() < activation) { vector[sig] = 'final'; present++; }
+        else if (rng() < 0.15) { vector[sig] = 'cancelled'; absent++; }
         else { vector[sig] = 'unknown'; }
       }
 

@@ -1,11 +1,13 @@
-import { pgTable, uuid, text, real, integer, timestamp, jsonb, pgEnum, boolean } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, real, integer, timestamp, jsonb, pgEnum, boolean, date, index, check } from 'drizzle-orm/pg-core';
 
 // ---- Enums ----
 export const healthRiskBandEnum = pgEnum('health_risk_band', ['critical', 'high', 'medium', 'low']);
 export const healthDomainEnum = pgEnum('health_domain', [
   'cardiovascular', 'metabolic', 'hormonal', 'musculoskeletal', 'sleep_recovery', 'cognitive',
 ]);
-export const healthSignalStateEnum = pgEnum('health_signal_state', ['present', 'absent', 'unknown']);
+export const healthSignalStateEnum = pgEnum('health_signal_state', [
+  'final', 'preliminary', 'registered', 'amended', 'corrected', 'cancelled', 'entered-in-error', 'unknown',
+]);
 export const healthGovBandEnum = pgEnum('health_governance_band', ['ESCALATED', 'MONITOR', 'SUPPRESSED']);
 export const sessionStatusEnum = pgEnum('session_status', ['draft', 'held', 'confirmed', 'completed']);
 export const auditActionEnum = pgEnum('audit_action', ['read', 'create', 'update', 'delete', 'export']);
@@ -20,7 +22,11 @@ export const organizations = pgTable('organizations', {
   name: text('name').notNull(),
   slug: text('slug').notNull().unique(),
   plan: text('plan').notNull().default('free'),
+  baa_status: text('baa_status').notNull().default('unsigned'), // 'unsigned' | 'pending' | 'signed' | 'expired'
+  baa_signed_at: timestamp('baa_signed_at', { withTimezone: true }),
+  baa_document_ref: text('baa_document_ref'),
   created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
 // ---- Subjects (replaces vins) ----
@@ -114,6 +120,8 @@ export const practitioners = pgTable('practitioners', {
   certifications: jsonb('certifications').default([]),
   latitude: real('latitude').notNull(),
   longitude: real('longitude').notNull(),
+  created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
 // ---- Session Slots (replaces fsr_slots) ----
@@ -148,11 +156,19 @@ export const protocolAssignments = pgTable('protocol_assignments', {
   protocol_id: text('protocol_id').notNull(),         // key into PROTOCOLS constant
   started_at: timestamp('started_at', { withTimezone: true }).notNull(),
   ended_at: timestamp('ended_at', { withTimezone: true }),
+  // DEPRECATED: use structured dose_* columns. Kept for migration compatibility.
   dosing_notes: text('dosing_notes').notNull().default(''),
+  dose_amount: real('dose_amount'),
+  dose_unit: text('dose_unit'),                       // 'mg', 'mcg', 'mL', 'IU'
+  dose_frequency: text('dose_frequency'),             // 'daily' | 'weekly' | 'biweekly' | 'as_needed'
+  dose_route: text('dose_route'),                     // 'SubQ' | 'intranasal' | 'oral' | 'IV' | 'topical'
+  dose_start_date: timestamp('dose_start_date', { withTimezone: true }),
+  dose_end_date: timestamp('dose_end_date', { withTimezone: true }),
   prescribed_by: text('prescribed_by').notNull().default('system'),
   status: text('status').notNull().default('active'),  // 'active', 'paused', 'completed', 'discontinued'
   metadata: jsonb('metadata').default({}),
   created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
 // ---- Subject Data Sources (which platforms a subject has connected) ----
@@ -164,7 +180,12 @@ export const subjectDataSources = pgTable('subject_data_sources', {
   connected_at: timestamp('connected_at', { withTimezone: true }).notNull().defaultNow(),
   last_sync_at: timestamp('last_sync_at', { withTimezone: true }),
   status: text('status').notNull().default('active'),  // 'active', 'disconnected', 'error'
+  // SECURITY: OAuth tokens must NOT be stored as plaintext in production.
+  // Store a reference key pointing to a secrets manager (AWS Secrets Manager, Vault).
+  // e.g. { secretRef: "longevity/org_id/subject_id/oura" }
   metadata: jsonb('metadata').default({}),
+  created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
 // ---- Audit Log (HIPAA foundation — built from day 1) ----
@@ -181,4 +202,69 @@ export const auditLog = pgTable('audit_log', {
   user_agent: text('user_agent'),
   metadata: jsonb('metadata').default({}),
   created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ---- Subject Current State (decoupled from subjects to reduce write contention) ----
+export const subjectCurrentState = pgTable('subject_current_state', {
+  subject_id: uuid('subject_id').primaryKey().references(() => subjects.id),
+  org_id: uuid('org_id').notNull(),
+  posterior_p: real('posterior_p').notNull().default(0.5),
+  posterior_p_var: real('posterior_p_var').notNull().default(0.25),
+  posterior_c: real('posterior_c').notNull().default(0.0),
+  posterior_s: real('posterior_s').notNull().default(1.0),
+  governance_band: text('governance_band').notNull().default('SUPPRESSED'),
+  governance_reason: text('governance_reason').notNull().default(''),
+  primary_domain: text('primary_domain'),
+  last_signal_at: timestamp('last_signal_at', { withTimezone: true }),
+  computed_at: timestamp('computed_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ---- Adverse Events (tracks protocol side effects) ----
+export const adverseEvents = pgTable('adverse_events', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  subject_id: uuid('subject_id').notNull().references(() => subjects.id),
+  org_id: uuid('org_id').notNull().references(() => organizations.id),
+  protocol_id: text('protocol_id'),
+  event_type: text('event_type').notNull(),           // 'nausea', 'injection_site_reaction', etc.
+  severity: text('severity').notNull(),               // 'mild' | 'moderate' | 'severe'
+  onset_at: timestamp('onset_at', { withTimezone: true }).notNull(),
+  resolved_at: timestamp('resolved_at', { withTimezone: true }),
+  notes: text('notes'),
+  reported_by: text('reported_by').notNull(),         // 'subject' | 'practitioner' | 'system'
+  created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ---- Subject Consents (tracks data sharing and protocol consent) ----
+export const subjectConsents = pgTable('subject_consents', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  subject_id: uuid('subject_id').notNull().references(() => subjects.id),
+  org_id: uuid('org_id').notNull().references(() => organizations.id),
+  consent_type: text('consent_type').notNull(),       // 'data_collection' | 'protocol_enrollment' | 'third_party_sharing' | 'research_use'
+  consented: boolean('consented').notNull(),
+  consented_at: timestamp('consented_at', { withTimezone: true }).notNull(),
+  revoked_at: timestamp('revoked_at', { withTimezone: true }),
+  consent_version: text('consent_version').notNull(),
+  ip_address: text('ip_address'),
+  created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ---- Subject Medications (current meds/supplements for interaction checking) ----
+export const subjectMedications = pgTable('subject_medications', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  subject_id: uuid('subject_id').notNull().references(() => subjects.id),
+  org_id: uuid('org_id').notNull().references(() => organizations.id),
+  name: text('name').notNull(),                       // drug/supplement name
+  rxcui: text('rxcui'),                               // RxNorm concept ID (optional)
+  category: text('category').notNull(),               // 'prescription' | 'otc' | 'supplement' | 'peptide'
+  dose_amount: real('dose_amount'),
+  dose_unit: text('dose_unit'),
+  frequency: text('frequency'),                       // 'daily' | 'weekly' | 'as_needed' | 'prn'
+  route: text('route'),                               // 'oral' | 'SubQ' | 'topical' | 'IV'
+  started_at: timestamp('started_at', { withTimezone: true }),
+  ended_at: timestamp('ended_at', { withTimezone: true }),
+  prescriber: text('prescriber'),
+  status: text('status').notNull().default('active'), // 'active' | 'discontinued' | 'paused'
+  notes: text('notes'),
+  created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

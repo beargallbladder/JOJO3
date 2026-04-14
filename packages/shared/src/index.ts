@@ -12,3 +12,4 @@ export * from './constants/health-signals.js';
 export * from './constants/protocols.js';
 export * from './constants/data-sources.js';
 export * from './constants/body-systems.js';
+export * from './constants/aggregation-weights.js';

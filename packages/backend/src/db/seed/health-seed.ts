@@ -49,6 +49,10 @@ async function healthSeed() {
   // Drop + recreate health tables
   console.log('  Dropping existing health tables...');
   await db.execute(sql`
+    DROP TABLE IF EXISTS subject_medications CASCADE;
+    DROP TABLE IF EXISTS subject_consents CASCADE;
+    DROP TABLE IF EXISTS adverse_events CASCADE;
+    DROP TABLE IF EXISTS subject_current_state CASCADE;
     DROP TABLE IF EXISTS audit_log CASCADE;
     DROP TABLE IF EXISTS session_bookings CASCADE;
     DROP TABLE IF EXISTS session_slots CASCADE;
@@ -76,7 +80,7 @@ async function healthSeed() {
   await db.execute(sql.raw(`
     DO $$ BEGIN CREATE TYPE "public"."health_risk_band" AS ENUM('critical','high','medium','low'); EXCEPTION WHEN duplicate_object THEN null; END $$;
     DO $$ BEGIN CREATE TYPE "public"."health_domain" AS ENUM('cardiovascular','metabolic','hormonal','musculoskeletal','sleep_recovery','cognitive'); EXCEPTION WHEN duplicate_object THEN null; END $$;
-    DO $$ BEGIN CREATE TYPE "public"."health_signal_state" AS ENUM('present','absent','unknown'); EXCEPTION WHEN duplicate_object THEN null; END $$;
+    DO $$ BEGIN CREATE TYPE "public"."health_signal_state" AS ENUM('final','preliminary','registered','amended','corrected','cancelled','entered-in-error','unknown'); EXCEPTION WHEN duplicate_object THEN null; END $$;
     DO $$ BEGIN CREATE TYPE "public"."health_governance_band" AS ENUM('ESCALATED','MONITOR','SUPPRESSED'); EXCEPTION WHEN duplicate_object THEN null; END $$;
     DO $$ BEGIN CREATE TYPE "public"."session_status" AS ENUM('draft','held','confirmed','completed'); EXCEPTION WHEN duplicate_object THEN null; END $$;
     DO $$ BEGIN CREATE TYPE "public"."audit_action" AS ENUM('read','create','update','delete','export'); EXCEPTION WHEN duplicate_object THEN null; END $$;
@@ -89,7 +93,11 @@ async function healthSeed() {
       "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
       "name" text NOT NULL, "slug" text NOT NULL UNIQUE,
       "plan" text NOT NULL DEFAULT 'free',
-      "created_at" timestamp with time zone DEFAULT now() NOT NULL
+      "baa_status" text NOT NULL DEFAULT 'unsigned' CHECK (baa_status IN ('unsigned','pending','signed','expired')),
+      "baa_signed_at" timestamp with time zone,
+      "baa_document_ref" text,
+      "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+      "updated_at" timestamp with time zone DEFAULT now() NOT NULL
     );
     CREATE TABLE IF NOT EXISTS "subjects" (
       "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
@@ -162,7 +170,9 @@ async function healthSeed() {
       "org_id" uuid NOT NULL REFERENCES "organizations"("id"),
       "name" text NOT NULL, "specialty" text NOT NULL, "metro_area" text NOT NULL,
       "certifications" jsonb DEFAULT '[]',
-      "latitude" real NOT NULL, "longitude" real NOT NULL
+      "latitude" real NOT NULL, "longitude" real NOT NULL,
+      "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+      "updated_at" timestamp with time zone DEFAULT now() NOT NULL
     );
     CREATE TABLE IF NOT EXISTS "session_slots" (
       "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
@@ -189,10 +199,13 @@ async function healthSeed() {
       "started_at" timestamp with time zone NOT NULL,
       "ended_at" timestamp with time zone,
       "dosing_notes" text NOT NULL DEFAULT '',
+      "dose_amount" real, "dose_unit" text, "dose_frequency" text,
+      "dose_route" text, "dose_start_date" timestamp with time zone, "dose_end_date" timestamp with time zone,
       "prescribed_by" text NOT NULL DEFAULT 'system',
       "status" text NOT NULL DEFAULT 'active',
       "metadata" jsonb DEFAULT '{}',
-      "created_at" timestamp with time zone DEFAULT now() NOT NULL
+      "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+      "updated_at" timestamp with time zone DEFAULT now() NOT NULL
     );
     CREATE TABLE IF NOT EXISTS "subject_data_sources" (
       "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
@@ -202,7 +215,9 @@ async function healthSeed() {
       "connected_at" timestamp with time zone DEFAULT now() NOT NULL,
       "last_sync_at" timestamp with time zone,
       "status" text NOT NULL DEFAULT 'active',
-      "metadata" jsonb DEFAULT '{}'
+      "metadata" jsonb DEFAULT '{}',
+      "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+      "updated_at" timestamp with time zone DEFAULT now() NOT NULL
     );
     CREATE TABLE IF NOT EXISTS "audit_log" (
       "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
@@ -216,6 +231,70 @@ async function healthSeed() {
       "metadata" jsonb DEFAULT '{}',
       "created_at" timestamp with time zone DEFAULT now() NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS "subject_current_state" (
+      "subject_id" uuid PRIMARY KEY REFERENCES "subjects"("id"),
+      "org_id" uuid NOT NULL,
+      "posterior_p" real NOT NULL DEFAULT 0.5,
+      "posterior_p_var" real NOT NULL DEFAULT 0.25,
+      "posterior_c" real NOT NULL DEFAULT 0.0,
+      "posterior_s" real NOT NULL DEFAULT 1.0,
+      "governance_band" text NOT NULL DEFAULT 'SUPPRESSED',
+      "governance_reason" text NOT NULL DEFAULT '',
+      "primary_domain" text,
+      "last_signal_at" timestamp with time zone,
+      "computed_at" timestamp with time zone DEFAULT now() NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS "adverse_events" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+      "subject_id" uuid NOT NULL REFERENCES "subjects"("id"),
+      "org_id" uuid NOT NULL REFERENCES "organizations"("id"),
+      "protocol_id" text,
+      "event_type" text NOT NULL,
+      "severity" text NOT NULL CHECK (severity IN ('mild','moderate','severe')),
+      "onset_at" timestamp with time zone NOT NULL,
+      "resolved_at" timestamp with time zone,
+      "notes" text,
+      "reported_by" text NOT NULL,
+      "created_at" timestamp with time zone DEFAULT now() NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS "subject_consents" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+      "subject_id" uuid NOT NULL REFERENCES "subjects"("id"),
+      "org_id" uuid NOT NULL REFERENCES "organizations"("id"),
+      "consent_type" text NOT NULL CHECK (consent_type IN ('data_collection','protocol_enrollment','third_party_sharing','research_use')),
+      "consented" boolean NOT NULL,
+      "consented_at" timestamp with time zone NOT NULL,
+      "revoked_at" timestamp with time zone,
+      "consent_version" text NOT NULL,
+      "ip_address" text,
+      "created_at" timestamp with time zone DEFAULT now() NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS "subject_medications" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+      "subject_id" uuid NOT NULL REFERENCES "subjects"("id"),
+      "org_id" uuid NOT NULL REFERENCES "organizations"("id"),
+      "name" text NOT NULL,
+      "rxcui" text,
+      "category" text NOT NULL,
+      "dose_amount" real, "dose_unit" text, "frequency" text, "route" text,
+      "started_at" timestamp with time zone,
+      "ended_at" timestamp with time zone,
+      "prescriber" text,
+      "status" text NOT NULL DEFAULT 'active',
+      "notes" text,
+      "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+      "updated_at" timestamp with time zone DEFAULT now() NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_subject_medications_lookup ON subject_medications (subject_id, status);
+    CREATE INDEX IF NOT EXISTS idx_hse_subject_signal_time ON health_signal_events (subject_id, signal_name, occurred_at);
+    CREATE INDEX IF NOT EXISTS idx_hse_org_time ON health_signal_events (org_id, occurred_at);
+    CREATE INDEX IF NOT EXISTS idx_audit_log_org_time ON audit_log (org_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_audit_log_actor_time ON audit_log (actor_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_audit_log_phi ON audit_log (phi_accessed, created_at DESC) WHERE phi_accessed = 1;
+    CREATE INDEX IF NOT EXISTS idx_audit_log_resource ON audit_log (resource_type, resource_id);
+    CREATE INDEX IF NOT EXISTS idx_adverse_events_subject ON adverse_events (subject_id, onset_at);
+    CREATE INDEX IF NOT EXISTS idx_adverse_events_org ON adverse_events (org_id, onset_at);
+    CREATE INDEX IF NOT EXISTS idx_subject_consents_lookup ON subject_consents (subject_id, consent_type);
   `));
 
   // ---- Generate data ----
@@ -319,6 +398,28 @@ async function healthSeed() {
     }).where(eq(hs.subjects.id, u.subject_id));
   }
 
+  // 5b. Populate subject_current_state
+  console.log('  Populating subject_current_state table...');
+  await batchInsert(db, hs.subjectCurrentState, subjectUpdates.map(u => ({
+    subject_id: u.subject_id,
+    org_id: subjects.find(s => s.id === u.subject_id)!.orgId,
+    posterior_p: u.posterior_p,
+    posterior_p_var: u.posterior_p_var,
+    posterior_c: u.posterior_c,
+    posterior_s: u.posterior_s,
+    governance_band: u.governance_band,
+    governance_reason: u.governance_reason,
+    primary_domain: subjects.find(s => s.id === u.subject_id)!.primaryDomain,
+    last_signal_at: u.last_signal_at,
+    computed_at: new Date(),
+  })));
+  console.log(`  ✓ ${subjectUpdates.length} subject_current_state rows`);
+
+  // Count ESCALATED
+  const escalatedCount = subjectUpdates.filter(u => u.governance_band === 'ESCALATED').length;
+  const monitorCount = subjectUpdates.filter(u => u.governance_band === 'MONITOR').length;
+  console.log(`  Governance: ${escalatedCount} ESCALATED, ${monitorCount} MONITOR, ${subjectUpdates.length - escalatedCount - monitorCount} SUPPRESSED`);
+
   // 6. Governance actions for escalated/monitored subjects
   console.log('  Generating governance actions...');
   const govActions = subjectUpdates
@@ -337,6 +438,128 @@ async function healthSeed() {
   }
   console.log(`  ✓ ${govActions.length} governance actions`);
 
+  // 7. Subject medications from active protocol assignments
+  console.log('  Generating subject medications...');
+  const PROTOCOL_MED_INFO: Record<string, { name: string; category: string; route: string; doseAmount: number; doseUnit: string; frequency: string }> = {
+    tirzepatide:   { name: 'Tirzepatide',           category: 'peptide', route: 'SubQ', doseAmount: 2.5,  doseUnit: 'mg',  frequency: 'weekly' },
+    semaglutide:   { name: 'Semaglutide',           category: 'peptide', route: 'SubQ', doseAmount: 0.25, doseUnit: 'mg',  frequency: 'weekly' },
+    aod_9604:      { name: 'AOD-9604',              category: 'peptide', route: 'SubQ', doseAmount: 300,  doseUnit: 'mcg', frequency: 'daily' },
+    lipo_c:        { name: 'Lipo-C / MIC+B12',     category: 'supplement', route: 'SubQ', doseAmount: 1, doseUnit: 'mL', frequency: 'weekly' },
+    nad_plus:      { name: 'NAD+',                  category: 'peptide', route: 'IV',   doseAmount: 250,  doseUnit: 'mg',  frequency: 'weekly' },
+    semax_selank:  { name: 'Semax / Selank Blend',  category: 'peptide', route: 'intranasal', doseAmount: 200, doseUnit: 'mcg', frequency: 'daily' },
+    glutathione:   { name: 'Glutathione',           category: 'supplement', route: 'IV', doseAmount: 200, doseUnit: 'mg', frequency: 'weekly' },
+    sermorelin:    { name: 'Sermorelin',            category: 'peptide', route: 'SubQ', doseAmount: 300,  doseUnit: 'mcg', frequency: 'daily' },
+    mots_c:        { name: 'MOTS-C',               category: 'peptide', route: 'SubQ', doseAmount: 10,   doseUnit: 'mg',  frequency: 'weekly' },
+    ghk_cu:        { name: 'GHK-Cu',               category: 'peptide', route: 'topical', doseAmount: 2, doseUnit: 'mL', frequency: 'daily' },
+    bpc157_tb500:  { name: 'BPC-157 / TB-500 Blend', category: 'peptide', route: 'SubQ', doseAmount: 500, doseUnit: 'mcg', frequency: 'daily' },
+  };
+
+  const medRows = protocolAssignments
+    .filter(pa => pa.status === 'active' && PROTOCOL_MED_INFO[pa.protocol_id])
+    .map(pa => {
+      const info = PROTOCOL_MED_INFO[pa.protocol_id];
+      return {
+        subject_id: pa.subject_id,
+        org_id: pa.org_id,
+        name: info.name,
+        category: info.category,
+        dose_amount: info.doseAmount,
+        dose_unit: info.doseUnit,
+        frequency: info.frequency,
+        route: info.route,
+        started_at: pa.started_at,
+        status: 'active' as const,
+      };
+    });
+
+  if (medRows.length > 0) {
+    await batchInsert(db, hs.subjectMedications, medRows);
+  }
+  console.log(`  ✓ ${medRows.length} subject medications`);
+
+  // 8. Adverse events for subjects on peptide protocols (clinical realism)
+  console.log('  Generating adverse events...');
+  const ADVERSE_TEMPLATES: Array<{ protocols: string[]; events: Array<{ type: string; severity: 'mild' | 'moderate' | 'severe'; pct: number }> }> = [
+    {
+      protocols: ['tirzepatide', 'semaglutide'],
+      events: [
+        { type: 'nausea', severity: 'mild', pct: 0.65 },
+        { type: 'injection_site_reaction', severity: 'mild', pct: 0.30 },
+        { type: 'diarrhea', severity: 'mild', pct: 0.20 },
+        { type: 'nausea', severity: 'moderate', pct: 0.15 },
+        { type: 'fatigue', severity: 'mild', pct: 0.10 },
+      ],
+    },
+    {
+      protocols: ['bpc_157'],
+      events: [
+        { type: 'injection_site_reaction', severity: 'mild', pct: 0.20 },
+        { type: 'nausea', severity: 'mild', pct: 0.08 },
+      ],
+    },
+    {
+      protocols: ['sermorelin', 'ipamorelin_cjc'],
+      events: [
+        { type: 'injection_site_reaction', severity: 'mild', pct: 0.25 },
+        { type: 'headache', severity: 'mild', pct: 0.15 },
+        { type: 'flushing', severity: 'mild', pct: 0.10 },
+      ],
+    },
+    {
+      protocols: ['nad_plus'],
+      events: [
+        { type: 'flushing', severity: 'moderate', pct: 0.40 },
+        { type: 'nausea', severity: 'mild', pct: 0.15 },
+        { type: 'chest_tightness', severity: 'mild', pct: 0.10 },
+      ],
+    },
+    {
+      protocols: ['semax', 'selank'],
+      events: [
+        { type: 'nasal_irritation', severity: 'mild', pct: 0.20 },
+      ],
+    },
+  ];
+
+  const adverseEventRows: Array<{
+    subject_id: string; org_id: string; protocol_id: string;
+    event_type: string; severity: string; onset_at: Date;
+    resolved_at: Date | null; notes: string; reported_by: string;
+  }> = [];
+
+  const rngSeed = 42;
+  let advRng = rngSeed;
+  const advRandom = () => { advRng = (advRng * 16807 + 0) % 2147483647; return advRng / 2147483647; };
+
+  for (const pa of protocolAssignments) {
+    for (const tmpl of ADVERSE_TEMPLATES) {
+      if (!tmpl.protocols.includes(pa.protocol_id)) continue;
+      for (const evt of tmpl.events) {
+        if (advRandom() > evt.pct) continue;
+        const daysAfterStart = 1 + Math.floor(advRandom() * 14);
+        const onsetAt = new Date(pa.started_at.getTime() + daysAfterStart * 864e5);
+        const resolved = evt.severity === 'mild' && advRandom() < 0.7;
+        const resolvedAt = resolved ? new Date(onsetAt.getTime() + (2 + Math.floor(advRandom() * 10)) * 864e5) : null;
+        adverseEventRows.push({
+          subject_id: pa.subject_id,
+          org_id: pa.org_id,
+          protocol_id: pa.protocol_id,
+          event_type: evt.type,
+          severity: evt.severity,
+          onset_at: onsetAt,
+          resolved_at: resolvedAt,
+          notes: resolved ? `Resolved with symptomatic management` : '',
+          reported_by: advRandom() < 0.6 ? 'subject' : 'practitioner',
+        });
+      }
+    }
+  }
+
+  if (adverseEventRows.length > 0) {
+    await batchInsert(db, hs.adverseEvents, adverseEventRows);
+  }
+  console.log(`  ✓ ${adverseEventRows.length} adverse events`);
+
   // Summary
   console.log('\n✅ Health seed complete!');
   console.log(`  Organization: LongevityPlan Demo`);
@@ -348,6 +571,8 @@ async function healthSeed() {
   console.log(`  Protocol Assignments: ${protocolAssignments.length}`);
   console.log(`  Data Source Connections: ${dataSourceConnections.length}`);
   console.log(`  Governance Actions: ${govActions.length}`);
+  console.log(`  Subject Medications: ${medRows.length}`);
+  console.log(`  Adverse Events: ${adverseEventRows.length}`);
 
   await pool.end();
 }
