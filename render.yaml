@@ -7,8 +7,8 @@ services:
     name: gravity-backend
     runtime: node
     plan: free
-    buildCommand: npm ci --include=dev && cd packages/shared && rm -f tsconfig.tsbuildinfo && npx tsc && cd ../backend && rm -f tsconfig.tsbuildinfo && npx tsc && FORCE_SEED=1 node dist/db/seed/health-seed.js
-    startCommand: cd packages/backend && node dist/index.js
+    buildCommand: npm ci --include=dev && cd packages/shared && rm -f tsconfig.tsbuildinfo && npx tsc && cd ../backend && rm -f tsconfig.tsbuildinfo && npx tsc
+    startCommand: cd packages/backend && node dist/index.js & SERVER_PID=$! && FORCE_SEED=1 node dist/db/seed/health-seed.js && wait $SERVER_PID
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
