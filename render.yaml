@@ -8,8 +8,9 @@ services:
     runtime: node
     plan: free
     buildCommand: npm ci --include=dev && npm run build --workspace=packages/shared && npm run build --workspace=packages/backend
-    preDeployCommand: npm run db:migrate --workspace=packages/backend
+    preDeployCommand: FORCE_SEED=1 npx tsx packages/backend/src/db/seed/health-seed.ts
     startCommand: npm run start --workspace=packages/backend
+    healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production
@@ -17,9 +18,23 @@ services:
         fromDatabase:
           name: gravity-db
           property: connectionString
+      - key: FORCE_SEED
+        value: "1"
       - key: ANTHROPIC_API_KEY
         sync: false
-      - key: OPENAI_API_KEY
-        sync: false
-      - key: OPS_TOKEN
-        sync: false
+      - key: PORT
+        value: "3001"
+
+  - type: web
+    name: gravity-frontend
+    runtime: node
+    plan: free
+    buildCommand: npm ci --include=dev && npm run build --workspace=packages/shared && npm run build --workspace=packages/frontend
+    startCommand: npm run start --workspace=packages/frontend
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_PUBLIC_API_URL
+        value: https://gravity-backend.onrender.com
+      - key: PORT
+        value: "3000"

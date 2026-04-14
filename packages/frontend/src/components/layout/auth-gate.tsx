@@ -2,9 +2,9 @@
 
 import { useState, useEffect } from 'react';
 
-const VALID_USER = 'Detroit';
-const VALID_PASS = 'Iam2slyru';
-const AUTH_KEY = 'gravity_auth';
+const VALID_USER = 'coach';
+const VALID_PASS = 'longevity2026';
+const AUTH_KEY = 'lp_auth';
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const [authed, setAuthed] = useState(false);
@@ -32,17 +32,19 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   };
 
   if (checking) return null;
-
   if (authed) return <>{children}</>;
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gravity-bg">
-      <form onSubmit={handleLogin} className="w-full max-w-sm p-8">
-        <div className="flex items-center gap-2.5 mb-8">
-          <div className="w-2 h-2 rounded-full bg-gray-400" />
-          <span className="font-semibold text-sm tracking-wide text-gravity-text">GRAVITY</span>
-          <span className="text-[10px] font-medium uppercase tracking-widest text-gravity-text-whisper ml-1">Vehicle Health</span>
+      <form onSubmit={handleLogin} className="w-full max-w-sm p-8 animate-fade-in">
+        <div className="flex items-center gap-2.5 mb-2">
+          <div className="w-3 h-3 rounded-full bg-health-teal animate-pulse-soft" />
+          <span className="font-semibold text-lg tracking-wide">LONGEVITY</span>
+          <span className="text-xs font-medium tracking-widest text-gravity-accent-warm">plan.ai</span>
         </div>
+        <p className="text-sm text-gravity-text-secondary mb-8">
+          Welcome back. Your clients are waiting.
+        </p>
 
         <div className="space-y-4">
           <div>
@@ -53,7 +55,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className="w-full px-4 py-2.5 bg-gravity-surface border border-gravity-border rounded-lg text-sm text-gravity-text placeholder:text-gravity-text-whisper focus:outline-none focus:border-gravity-accent/40"
+              className="w-full px-4 py-2.5 bg-gravity-surface border border-gravity-border rounded-lg text-sm text-gravity-text placeholder:text-gravity-text-whisper focus:outline-none focus:border-gravity-accent/50 transition-colors"
               autoFocus
             />
           </div>
@@ -65,17 +67,13 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-4 py-2.5 bg-gravity-surface border border-gravity-border rounded-lg text-sm text-gravity-text placeholder:text-gravity-text-whisper focus:outline-none focus:border-gravity-accent/40"
+              className="w-full px-4 py-2.5 bg-gravity-surface border border-gravity-border rounded-lg text-sm text-gravity-text placeholder:text-gravity-text-whisper focus:outline-none focus:border-gravity-accent/50 transition-colors"
             />
           </div>
-
-          {error && (
-            <p className="text-xs text-red-400">{error}</p>
-          )}
-
+          {error && <p className="text-xs text-health-coral">{error}</p>}
           <button
             type="submit"
-            className="w-full py-2.5 bg-gravity-accent hover:bg-gravity-accent/90 text-white text-sm font-medium rounded-lg transition-colors"
+            className="w-full py-2.5 bg-gravity-accent hover:bg-gravity-accent/90 text-white text-sm font-medium rounded-lg transition-all hover:shadow-lg hover:shadow-gravity-accent/20"
           >
             Sign In
           </button>

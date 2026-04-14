@@ -1,6 +1,6 @@
-import type { Vin, PillarEvent, PosteriorSnapshot, RiskBand, Subsystem, SortContext } from './vin';
-import type { Dealer, FSRSlot, BookingDraft } from './dealer';
-import type { GovernanceAction } from './governance';
+import type { Vin, PillarEvent, PosteriorSnapshot, RiskBand, Subsystem, SortContext } from './vin.js';
+import type { Dealer, FSRSlot, BookingDraft } from './dealer.js';
+import type { GovernanceAction } from './governance.js';
 
 export interface LeadsQuery {
   subsystem?: Subsystem;

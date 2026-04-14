@@ -1,0 +1,11 @@
+subject_id,age,sex,fitness_level
+S000,42,F,medium
+S001,46,F,medium
+S002,41,F,low
+S003,25,F,low
+S004,48,M,low
+S005,31,M,medium
+S006,34,M,high
+S007,32,M,low
+S008,32,F,low
+S009,40,F,low

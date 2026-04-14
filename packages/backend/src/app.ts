@@ -3,14 +3,12 @@ import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import { errorHandler } from './middleware/error-handler.js';
 import { requestId } from './middleware/request-id.js';
-import { leadsRoute } from './routes/leads.js';
-import { vinRoute } from './routes/vin.js';
-import { dealersRoute } from './routes/dealers.js';
-import { fsrRoute } from './routes/fsr.js';
-import { bookingRoute } from './routes/booking.js';
-import { voiceRoute } from './routes/voice.js';
-import { ttsRoute } from './routes/tts.js';
-import { opsRoute } from './routes/ops.js';
+import { mockAuth } from './middleware/mock-auth.js';
+import { subjectsRoute } from './routes/health/subjects.js';
+import { signalsRoute } from './routes/health/signals.js';
+import { snapshotsRoute } from './routes/health/snapshots.js';
+import { supportingRoute } from './routes/health/supporting.js';
+import { intelligenceRoute } from './routes/health/intelligence.js';
 
 export function createApp() {
   const app = new Hono();
@@ -22,14 +20,16 @@ export function createApp() {
 
   app.get('/health', (c) => c.json({ status: 'ok' }));
 
-  app.route('/leads', leadsRoute);
-  app.route('/vin', vinRoute);
-  app.route('/dealers', dealersRoute);
-  app.route('/fsr', fsrRoute);
-  app.route('/booking', bookingRoute);
-  app.route('/voice', voiceRoute);
-  app.route('/tts', ttsRoute);
-  app.route('/ops', opsRoute);
+  // ---- Health / LongevityPlan API v1 ----
+  const v1 = new Hono<{ Variables: { org_id: string; actor_id: string; actor_type: string } }>();
+  v1.use('*', mockAuth);
+  v1.route('/subjects', subjectsRoute);
+  v1.route('/subjects', signalsRoute);    // /subjects/:id/signals
+  v1.route('/subjects', snapshotsRoute);  // /subjects/:id/snapshots
+  v1.route('/subjects', intelligenceRoute); // /subjects/:id/intelligence
+  v1.route('/', supportingRoute);         // /protocols, /practitioners, /org/stats, /data-sources
+
+  app.route('/api/v1', v1);
 
   return app;
 }
